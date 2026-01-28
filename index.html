@@ -1,0 +1,1853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Inventory</title>
+    
+    <!-- PWA / Standalone App Meta Tags -->
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/svg+xml" href="icon.svg">
+    <link rel="apple-touch-icon" href="icon.svg">
+    
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Inventory">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="application-name" content="Inventory">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: { slate: { 850: '#151e32' } }
+                }
+            }
+        }
+    </script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- html2pdf.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; -webkit-tap-highlight-color: transparent; }
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e0; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        #root { height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+        
+        /* Report Content: Hidden visually but renderable */
+        #report-wrapper {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 0;
+            overflow: hidden;
+            z-index: -9999;
+        }
+
+        .modal-enter { animation: modalIn 0.2s ease-out forwards; }
+        @keyframes modalIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+    </style>
+</head>
+<body class="text-slate-800">
+    <div id="root"></div>
+    <div id="report-wrapper"><div id="report-content"></div></div>
+
+    <script>
+        // Register Service Worker
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(reg => console.log('Service Worker registered', reg))
+                    .catch(err => console.log('Service Worker registration failed', err));
+            });
+        }
+    </script>
+
+    <script type="text/babel">
+        const { useState, useMemo, useEffect, useRef } = React;
+
+        // --- 1. ICONS ---
+        const ICONS = {
+            LayoutDashboard: <g><rect width="7" height="9" x="3" y="3" rx="1" /><rect width="7" height="5" x="14" y="3" rx="1" /><rect width="7" height="9" x="14" y="12" rx="1" /><rect width="7" height="5" x="3" y="16" rx="1" /></g>,
+            Building2: <g><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></g>,
+            Warehouse: <g><path d="M22 8.35V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8.35A2 2 0 0 1 3.26 6.5l8-3.2a2 2 0 0 1 1.48 0l8 3.2A2 2 0 0 1 22 8.35Z"/><path d="M6 18h12"/><path d="M6 14h12"/><rect width="12" height="12" x="6" y="10" /></g>,
+            Package: <g><path d="m16.5 9.4-9-5.19"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></g>,
+            History: <g><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></g>,
+            Settings: <g><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></g>,
+            Plus: <g><path d="M5 12h14"/><path d="M12 5v14"/></g>,
+            Search: <g><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></g>,
+            Trash2: <g><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></g>,
+            Box: <g><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></g>,
+            MapPin: <g><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></g>,
+            Tag: <g><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l5 5a2 2 0 0 0 2.828 0l7.172-7.172a2 2 0 0 0 0-2.828l-5-5z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/></g>,
+            CornerDownRight: <g><polyline points="15 10 20 15 15 20"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/></g>,
+            AlertTriangle: <g><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></g>,
+            Info: <g><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></g>,
+            List: <g><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></g>,
+            Layers: <g><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></g>,
+            Edit2: <g><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></g>,
+            Download: <g><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></g>,
+            Upload: <g><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></g>,
+            Save: <g><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></g>,
+            FileJson: <g><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M10 12h.01"/><path d="M14 12h.01"/><path d="M10 16h.01"/><path d="M14 16h.01"/></g>,
+            CheckCircle2: <g><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></g>,
+            XCircle: <g><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></g>,
+            Wrench: <g><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></g>,
+            ArrowRightLeft: <g><path d="m16 7 4-4-4-4"/><path d="M20 3H4"/><path d="m8 17-4 4 4 4"/><path d="M4 21h16"/></g>,
+            AlertOctagon: <g><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></g>,
+            CheckSquare: <g><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></g>,
+            ArrowRight: <g><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></g>,
+            RefreshCw: <g><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></g>,
+            ChevronDown: <g><path d="m6 9 6 6 6-6"/></g>,
+            ChevronRight: <g><path d="m9 18 6-6-6-6"/></g>,
+            RotateCcw: <g><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></g>,
+            FileText: <g><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><polyline points="10 9 9 9 8 9"/></g>,
+            Printer: <g><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></g>,
+            Menu: <g><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></g>,
+            X: <g><path d="M18 6 6 18"/><path d="m6 6 12 12"/></g>,
+            BarChart3: <g><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></g>,
+            Filter: <g><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></g>,
+            LogOut: <g><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" x2="9" y1="12" y2="12" /></g>,
+            Users: <g><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></g>,
+            User: <g><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></g>,
+            Eye: <g><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></g>
+        };
+
+        // --- 2. ICON COMPONENT ---
+        const Icon = ({ name, size = 18, className = "", ...props }) => {
+            const iconContent = ICONS[name];
+            return (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width={size}
+                    height={size}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className={className}
+                    {...props}
+                >
+                    {iconContent || <circle cx="12" cy="12" r="10" stroke="red" />}
+                </svg>
+            );
+        };
+
+        // --- 3. HELPER FUNCTIONS ---
+        const generateId = (prefix) => `${prefix}-${Math.random().toString(36).substr(2, 4).toUpperCase()}${Math.floor(Math.random()*100)}`;
+        
+        const generateItemUniqueId = (productName, existingIds = []) => {
+            const words = productName.trim().split(/[\s-]+/);
+            let prefix = words.map(w => w.replace(/[^a-zA-Z0-9]/g, '')[0]).join('').toUpperCase();
+            if (prefix.length < 3) prefix = productName.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().substring(0, 3);
+            if (prefix.length === 0) prefix = 'ITM';
+            prefix = prefix.substring(0, 4);
+            const regex = new RegExp(`^${prefix}-(\\d+)$`);
+            let maxNum = 0;
+            existingIds.forEach(id => {
+                const match = id.match(regex);
+                if (match) {
+                    const num = parseInt(match[1], 10);
+                    if (!isNaN(num) && num > maxNum) maxNum = num;
+                }
+            });
+            const nextNum = maxNum + 1;
+            return `${prefix}-${String(nextNum).padStart(3, '0')}`;
+        };
+
+        const formatTimestamp = (dateStr) => new Date(dateStr).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        
+        const getOrdinalSuffix = (i) => {
+            const j = i % 10, k = i % 100;
+            if (j === 1 && k !== 11) return "st";
+            if (j === 2 && k !== 12) return "nd";
+            if (j === 3 && k !== 13) return "rd";
+            return "th";
+        };
+
+        const groupByCategory = (items) => {
+            const groups = {};
+            if (!items) return groups;
+            items.forEach(item => {
+                const cat = item.category || 'Uncategorized';
+                const sub = item.subCategory || 'General';
+                if (!groups[cat]) groups[cat] = {};
+                if (!groups[cat][sub]) groups[cat][sub] = [];
+                groups[cat][sub].push(item);
+            });
+            return groups;
+        };
+
+        const getLocationName = (locations, id) => locations.find(l => l.id === id)?.name || id;
+
+        // --- 4. PDF GENERATOR ---
+        const generatePDF = (inventory, locations, catalog, logs, config) => {
+            const element = document.getElementById('report-content');
+            const dateStr = new Date().toLocaleString();
+            
+            let html = `
+                <div style="font-family: 'Helvetica', sans-serif; padding: 40px; color: #334155; font-size: 12px; line-height: 1.5; background: white;">
+                    <div style="border-bottom: 2px solid #1e40af; padding-bottom: 10px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: flex-end;">
+                        <div>
+                            <h1 style="margin: 0; font-size: 24px; color: #1e40af; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">Corporate Inventory Report</h1>
+                            <p style="margin: 5px 0 0; color: #64748b; font-size: 12px;">Generated on: ${dateStr}</p>
+                        </div>
+                        <div style="text-align: right;">
+                            <div style="font-weight: bold; font-size: 14px; color: #0f172a;">CONFIDENTIAL</div>
+                            <div style="color: #64748b;">Internal Use Only</div>
+                        </div>
+                    </div>
+
+                    <div style="display: flex; gap: 10px; margin-bottom: 30px;">
+                        <div style="flex:1; background: #f1f5f9; padding: 10px; border-left: 4px solid #3b82f6;">
+                            <div style="font-size: 20px; font-weight: bold; color: #1e40af;">${inventory.length}</div>
+                            <div style="font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: bold;">Total Assets</div>
+                        </div>
+                         <div style="flex:1; background: #f1f5f9; padding: 10px; border-left: 4px solid #10b981;">
+                            <div style="font-size: 20px; font-weight: bold; color: #065f46;">${locations.length}</div>
+                            <div style="font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: bold;">Locations</div>
+                        </div>
+                         <div style="flex:1; background: #fff1f2; padding: 10px; border-left: 4px solid #ef4444;">
+                            <div style="font-size: 20px; font-weight: bold; color: #b91c1c;">${inventory.filter(i => i.status === 'Defective').length}</div>
+                            <div style="font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: bold;">Defects</div>
+                        </div>
+                    </div>
+            `;
+
+            if (config.inventory) {
+                const grouped = groupByCategory(inventory);
+                html += `<h2 style="font-size: 16px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; margin-bottom: 15px; color: #0f172a; font-weight: bold; text-transform: uppercase;">Inventory Overview</h2>`;
+                
+                Object.keys(grouped).forEach(cat => {
+                    html += `<div style="margin-bottom: 20px; page-break-inside: avoid;">`;
+                    html += `<div style="background: #e2e8f0; color: #334155; padding: 6px 10px; font-weight: bold; font-size: 13px; border-radius: 4px 4px 0 0; border: 1px solid #cbd5e1;">${cat}</div>`;
+                    html += `<div style="border: 1px solid #cbd5e1; border-top: none; padding: 10px; background: white;">`;
+                    
+                    Object.keys(grouped[cat]).forEach(sub => {
+                        html += `<div style="margin-bottom: 10px; page-break-inside: avoid;">`;
+                        html += `<div style="font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 5px; text-transform: uppercase; padding-bottom: 3px; border-bottom: 1px dashed #e2e8f0;">${sub}</div>`;
+                        
+                        const productsInSub = {};
+                        grouped[cat][sub].forEach(item => {
+                            if(!productsInSub[item.name]) productsInSub[item.name] = [];
+                            productsInSub[item.name].push(item);
+                        });
+
+                        Object.keys(productsInSub).forEach(prodName => {
+                            html += `<div style="margin-left: 10px; margin-bottom: 8px;">`;
+                            html += `<div style="font-weight: bold; font-size: 11px; color: #1e293b;">${prodName} <span style="font-weight: normal; color: #64748b;">(${productsInSub[prodName].length} units)</span></div>`;
+                            
+                            html += `<table style="width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 3px;">
+                                <thead style="background: #f8fafc;">
+                                    <tr>
+                                        <th style="text-align:left; padding:4px; border:1px solid #e2e8f0; width: 20%;">ID</th>
+                                        <th style="text-align:left; padding:4px; border:1px solid #e2e8f0; width: 40%;">Location</th>
+                                        <th style="text-align:left; padding:4px; border:1px solid #e2e8f0; width: 20%;">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>`;
+                            
+                            productsInSub[prodName].forEach(item => {
+                                const loc = getLocationName(locations, item.locationId);
+                                const statusColor = item.status === 'Defective' ? '#ef4444' : (item.status === 'Active' ? '#10b981' : '#64748b');
+                                html += `<tr>
+                                    <td style="padding:4px; border:1px solid #e2e8f0; font-family: monospace;">${item.id}</td>
+                                    <td style="padding:4px; border:1px solid #e2e8f0;">${loc}</td>
+                                    <td style="padding:4px; border:1px solid #e2e8f0; color: ${statusColor}; font-weight: 500;">${item.status}</td>
+                                </tr>`;
+                            });
+                            
+                            html += `</tbody></table></div>`;
+                        });
+                        html += `</div>`;
+                    });
+                    html += `</div></div>`;
+                });
+            }
+
+            if (config.locations) {
+                html += `<div style="page-break-before: always;"><h2 style="font-size: 16px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; margin-bottom: 15px; color: #0f172a; font-weight: bold; text-transform: uppercase;">Location Summary</h2>`;
+                html += `<table style="width: 100%; border-collapse: collapse; font-size: 10px;"><thead><tr style="background: #f1f5f9;"><th style="padding:6px; border:1px solid #e2e8f0; text-align: left;">Name</th><th style="padding:6px; border:1px solid #e2e8f0; text-align: left;">Type</th><th style="padding:6px; border:1px solid #e2e8f0; text-align: left;">Status</th><th style="padding:6px; border:1px solid #e2e8f0; text-align: right;">Items</th></tr></thead><tbody>`;
+                locations.forEach(l => {
+                    const count = inventory.filter(i => i.locationId === l.id).length;
+                    html += `<tr><td style="padding:6px; border:1px solid #e2e8f0;">${l.name}</td><td style="padding:6px; border:1px solid #e2e8f0; text-transform: capitalize;">${l.type}</td><td style="padding:6px; border:1px solid #e2e8f0;">${l.status || '-'}</td><td style="padding:6px; border:1px solid #e2e8f0; text-align: right;">${count}</td></tr>`;
+                });
+                html += `</tbody></table></div>`;
+            }
+
+            if (config.defects) {
+                const defects = inventory.filter(i => i.status === 'Defective' || i.status === 'Pullout');
+                if(defects.length > 0) {
+                    html += `<div style="page-break-before: always; page-break-inside: avoid;"><h2 style="font-size: 16px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; margin-bottom: 15px; color: #b91c1c; font-weight: bold; text-transform: uppercase;">Defective Items Report</h2>`;
+                    html += `<table style="width: 100%; border-collapse: collapse; font-size: 10px;"><thead><tr style="background: #fee2e2;"><th style="padding:6px; border:1px solid #fca5a5; text-align: left;">ID</th><th style="padding:6px; border:1px solid #fca5a5; text-align: left;">Name</th><th style="padding:6px; border:1px solid #fca5a5; text-align: left;">Location</th><th style="padding:6px; border:1px solid #fca5a5; text-align: left;">Status</th></tr></thead><tbody>`;
+                    defects.forEach(i => {
+                        html += `<tr><td style="padding:6px; border:1px solid #e2e8f0; font-family: monospace;">${i.id}</td><td style="padding:6px; border:1px solid #e2e8f0;">${i.name}</td><td style="padding:6px; border:1px solid #e2e8f0;">${getLocationName(locations, i.locationId)}</td><td style="padding:6px; border:1px solid #e2e8f0; color: #b91c1c; font-weight: bold;">${i.status}</td></tr>`;
+                    });
+                    html += `</tbody></table></div>`;
+                }
+            }
+
+            if (config.activity) {
+                html += `<div style="page-break-before: always;"><h2 style="font-size: 16px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; margin-bottom: 15px; color: #0f172a; font-weight: bold; text-transform: uppercase;">Activity Log (Recent)</h2>`;
+                html += `<table style="width: 100%; border-collapse: collapse; font-size: 10px;"><thead><tr style="background: #f1f5f9;"><th style="padding:6px; border:1px solid #e2e8f0; text-align: left;">Date</th><th style="padding:6px; border:1px solid #e2e8f0; text-align: left;">Action</th><th style="padding:6px; border:1px solid #e2e8f0; text-align: left;">Details</th><th style="padding:6px; border:1px solid #e2e8f0; text-align: left;">User</th></tr></thead><tbody>`;
+                logs.slice(0, 50).forEach(log => {
+                    html += `<tr><td style="padding:6px; border:1px solid #e2e8f0;">${new Date(log.timestamp).toLocaleString()}</td><td style="padding:6px; border:1px solid #e2e8f0; font-weight: bold;">${log.action}</td><td style="padding:6px; border:1px solid #e2e8f0;">${log.details}</td><td style="padding:6px; border:1px solid #e2e8f0;">${log.performer || 'System'}</td></tr>`;
+                });
+                html += `</tbody></table></div>`;
+            }
+
+            html += `</div>`;
+            element.innerHTML = html;
+            
+            // To ensure visibility for html2canvas
+            const wrapper = document.getElementById('report-wrapper');
+            wrapper.style.zIndex = 9999;
+            wrapper.style.height = 'auto';
+
+            const opt = { 
+                margin: 10, 
+                filename: `InventoryReport_${new Date().toISOString().slice(0,10)}.pdf`, 
+                image: { type: 'jpeg', quality: 0.98 }, 
+                html2canvas: { scale: 2, scrollY: 0 }, 
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                pagebreak: { mode: ['avoid-all', 'css', 'legacy'] } 
+            };
+            
+            html2pdf().set(opt).from(element).save().then(() => {
+                element.innerHTML = '';
+                wrapper.style.zIndex = -9999;
+                wrapper.style.height = '0';
+            });
+        };
+
+        // --- 5. COMPONENTS ---
+
+        const NavBtn = ({ icon, label, active, onClick, color, hidden }) => {
+            if (hidden) return null;
+            return (
+                <button onClick={onClick} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${active ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'hover:bg-slate-800 text-slate-400'} ${color || ''}`}>
+                    <Icon name={icon} size={20} /> <span className="font-medium">{label}</span>
+                </button>
+            );
+        };
+
+        const LoginView = ({ staff, onLogin }) => {
+            const [roleFilter, setRoleFilter] = useState('Lead');
+            const [selectedUser, setSelectedUser] = useState(null);
+            const [password, setPassword] = useState('');
+            const [error, setError] = useState('');
+
+            const leads = (staff || []).filter(s => s && s.role === 'Lead');
+            const operators = (staff || []).filter(s => s && s.role === 'Live Operator');
+
+            const handleUserClick = (user) => {
+                if (user.role === 'Lead') {
+                    setSelectedUser(user);
+                    setPassword('');
+                    setError('');
+                } else {
+                    onLogin(user);
+                }
+            };
+
+            const handlePasswordLogin = (e) => {
+                e.preventDefault();
+                if (password === 'leads123') {
+                    onLogin(selectedUser);
+                } else {
+                    setError('Incorrect password');
+                }
+            };
+
+            if (selectedUser) {
+                return (
+                    <div className="flex h-screen items-center justify-center bg-slate-50 p-4">
+                        <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-100 animate-in fade-in zoom-in duration-300">
+                            <div className="bg-slate-900 p-8 text-center">
+                                <div className="w-16 h-16 bg-indigo-500 rounded-2xl flex items-center justify-center mx-auto mb-4 text-white shadow-lg shadow-indigo-900/50">
+                                    <Icon name="User" size={32} />
+                                </div>
+                                <h1 className="text-xl font-bold text-white mb-1">Welcome, {selectedUser.name}</h1>
+                                <p className="text-slate-400 text-sm">Please enter your password</p>
+                            </div>
+                            <form onSubmit={handlePasswordLogin} className="p-6 space-y-4">
+                                <div>
+                                    <input 
+                                        type="password" 
+                                        autoFocus
+                                        className="w-full border border-slate-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all" 
+                                        placeholder="Password" 
+                                        value={password} 
+                                        onChange={e => {setPassword(e.target.value); setError('')}} 
+                                    />
+                                    {error && <p className="text-xs text-red-500 mt-2 font-medium flex items-center gap-1"><Icon name="AlertTriangle" size={12}/> {error}</p>}
+                                </div>
+                                <div className="flex gap-3">
+                                    <button type="button" onClick={() => setSelectedUser(null)} className="flex-1 py-3 border border-slate-200 rounded-lg font-medium text-slate-600 hover:bg-slate-50 transition-colors">Back</button>
+                                    <button type="submit" className="flex-1 py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-colors">Login</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="flex h-screen items-center justify-center bg-slate-50 p-4">
+                    <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-100">
+                        <div className="bg-slate-900 p-8 text-center">
+                            <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 text-white shadow-lg shadow-blue-900/50">
+                                <Icon name="LayoutDashboard" size={32} />
+                            </div>
+                            <h1 className="text-2xl font-bold text-white mb-1">Inventory Manager</h1>
+                            <p className="text-slate-400 text-sm">Select your profile to continue</p>
+                        </div>
+                        <div className="p-2 bg-slate-100 flex gap-1 m-4 rounded-lg">
+                            <button onClick={()=>setRoleFilter('Lead')} className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${roleFilter==='Lead'?'bg-white text-slate-900 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Leads</button>
+                            <button onClick={()=>setRoleFilter('Live Operator')} className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${roleFilter==='Live Operator'?'bg-white text-slate-900 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>Live Operators</button>
+                        </div>
+                        <div className="px-4 pb-8 overflow-y-auto max-h-[300px]">
+                            <div className="space-y-2">
+                                {(roleFilter === 'Lead' ? leads : operators).length === 0 && (
+                                    <p className="text-center text-slate-400 text-sm py-4">No staff found for this role.</p>
+                                )}
+                                {(roleFilter === 'Lead' ? leads : operators).map(user => (
+                                    <button 
+                                        key={user.id} 
+                                        onClick={() => handleUserClick(user)}
+                                        className="w-full p-4 flex items-center gap-4 bg-white border border-slate-200 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-all group text-left"
+                                    >
+                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white ${user.role==='Lead'?'bg-indigo-500':'bg-emerald-500'}`}>
+                                            <Icon name="User" size={20}/>
+                                        </div>
+                                        <div>
+                                            <div className="font-bold text-slate-800 group-hover:text-blue-700">{user.name}</div>
+                                            <div className="text-xs text-slate-500">{user.role}</div>
+                                        </div>
+                                        <Icon name="ArrowRight" className="ml-auto text-slate-300 group-hover:text-blue-500" />
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const DashboardView = ({ inventory, locations, logs, onViewLogDetails }) => {
+            const totalItems = inventory.length;
+            const rooms = locations.filter(l => l.type === 'room');
+            const occupied = rooms.filter(l => l.status === 'Occupied').length;
+            const occupancy = rooms.length ? Math.round((occupied/rooms.length)*100) : 0;
+            const storageIds = locations.filter(l=>l.type==='storage').map(l=>l.id);
+            const inStorage = inventory.filter(i=>storageIds.includes(i.locationId) && i.status === 'Active').length;
+            const defects = inventory.filter(i=>i.status==='Defective' || i.status==='Pullout').length;
+            const catStats = inventory.reduce((acc, i) => { acc[i.category] = (acc[i.category] || 0) + 1; return acc; }, {});
+            const maxVal = Math.max(...Object.values(catStats), 1);
+
+            return (
+                <div className="space-y-6 pb-20 animate-in fade-in duration-500">
+                    <header className="mb-8">
+                        <h2 className="text-3xl font-bold text-slate-800 tracking-tight">Overview</h2>
+                        <p className="text-slate-500">System status and key metrics</p>
+                    </header>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 flex justify-between items-center"><div><p className="text-xs font-bold text-slate-400 uppercase">Total Assets</p><h3 className="text-3xl font-bold text-blue-600 mt-1">{totalItems}</h3></div><div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><Icon name="Package" /></div></div>
+                        <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 flex justify-between items-center"><div><p className="text-xs font-bold text-slate-400 uppercase">Storage</p><h3 className="text-3xl font-bold text-emerald-500 mt-1">{inStorage}</h3></div><div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg"><Icon name="Warehouse" /></div></div>
+                        <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 flex justify-between items-center"><div><p className="text-xs font-bold text-slate-400 uppercase">Occupancy</p><h3 className="text-3xl font-bold text-orange-500 mt-1">{occupancy}%</h3></div><div className="p-2 bg-orange-50 text-orange-600 rounded-lg"><Icon name="Building2" /></div></div>
+                        <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 flex justify-between items-center"><div><p className="text-xs font-bold text-slate-400 uppercase">Issues</p><h3 className="text-3xl font-bold text-rose-500 mt-1">{defects}</h3></div><div className="p-2 bg-rose-50 text-rose-600 rounded-lg"><Icon name="AlertOctagon" /></div></div>
+                    </div>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 lg:col-span-2">
+                            <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Icon name="BarChart3" size={18} className="text-slate-400"/> Inventory by Category</h3>
+                            <div className="space-y-4">{Object.entries(catStats).map(([cat, val]) => (
+                                <div key={cat}><div className="flex justify-between text-sm mb-1"><span className="font-medium">{cat}</span><span className="text-slate-500">{val}</span></div><div className="w-full bg-slate-100 rounded-full h-2"><div className="bg-blue-600 h-2 rounded-full" style={{width: `${(val/maxVal)*100}%`}}></div></div></div>
+                            ))}</div>
+                        </div>
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                             <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Icon name="History" size={18} className="text-slate-400"/> Recent Activity</h3>
+                             <div className="space-y-3">{logs.slice(0,6).map(log=>(
+                                 <div key={log.id} className="text-sm border-b pb-2">
+                                     <div className="font-medium">{log.action}</div>
+                                     <div className="text-xs text-slate-500">{log.details}</div>
+                                     <div className="text-xs text-slate-400">By: {log.performer}</div>
+                                     {log.items && log.items.length > 0 && (
+                                         <button onClick={() => onViewLogDetails(log)} className="mt-1 text-xs bg-slate-100 text-blue-600 px-2 py-1 rounded hover:bg-slate-200 flex items-center gap-1">
+                                             <Icon name="Eye" size={12}/> View Items ({log.items.length})
+                                         </button>
+                                     )}
+                                     <div className="text-[10px] text-slate-400 mt-1">{formatTimestamp(log.timestamp)}</div>
+                                 </div>
+                             ))}</div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const InventoryView = ({ filterType, title, locations, inventory, onOpenAssignModal, onOpenTransferModal, onOpenSwapModal, onDeleteItem, onDeleteLocation, onUpdateRoomStatus, onReportIssue, onUpdateItemStatus }) => {
+            const [selectedId, setSelectedId] = useState(null);
+            const [openFloors, setOpenFloors] = useState({});
+            const [expandedGroups, setExpandedGroups] = useState({});
+
+            useEffect(() => setSelectedId(null), [filterType]);
+            const selectedLocation = useMemo(() => locations.find(l => l.id === selectedId), [locations, selectedId]);
+
+            let relevantLocations = filterType === 'structure' ? locations.filter(l => l.type === 'floor') : locations.filter(l => l.type === filterType);
+            const getItemsInLocation = (locId) => inventory.filter(i => i.locationId === locId);
+            const getLocationItemCount = (locId) => getItemsInLocation(locId).length;
+
+            const getDeepGroupedItems = (locId) => {
+                const items = getItemsInLocation(locId);
+                const groups = {};
+                items.forEach(i => {
+                    const c = i.category || 'Uncategorized';
+                    const s = i.subCategory || 'General';
+                    if(!groups[c]) groups[c] = {};
+                    if(!groups[c][s]) groups[c][s] = {};
+                    if(!groups[c][s][i.name]) groups[c][s][i.name] = [];
+                    groups[c][s][i.name].push(i);
+                });
+                return groups;
+            };
+
+            const toggleFloor = id => setOpenFloors(p => ({...p, [id]: !p[id]}));
+            const toggleGroup = key => setExpandedGroups(p => ({...p, [key]: !p[key]}));
+            const getItemStatusBadge = (s) => <span className={`text-[10px] px-1.5 py-0.5 rounded border font-bold ${s==='Defective'?'bg-red-50 text-red-600':s==='Pullout'?'bg-slate-800 text-white':'bg-green-50 text-green-600'}`}>{s}</span>;
+            const getStatusColor = (status) => status === 'Occupied' ? 'bg-red-100 text-red-700 border-red-200' : status === 'Maintenance' ? 'bg-yellow-100 text-yellow-700 border-yellow-200' : 'bg-green-100 text-green-700 border-green-200';
+
+            return (
+                <div className="flex flex-col lg:flex-row h-[calc(100vh-100px)] gap-6">
+                    <div className={`${selectedLocation ? 'hidden lg:flex' : 'flex'} flex-col w-full lg:w-80 bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden`}>
+                        <div className="p-4 border-b border-slate-100 bg-slate-50"><h3 className="font-bold text-slate-700">{title} List</h3></div>
+                        <div className="flex-1 overflow-y-auto p-2">
+                            {relevantLocations.map(loc => (
+                                <div key={loc.id} className="mb-2">
+                                    <div onClick={() => filterType === 'structure' ? toggleFloor(loc.id) : setSelectedId(loc.id)} className={`p-3 rounded-lg flex items-center justify-between cursor-pointer transition-all ${selectedId===loc.id ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200' : 'hover:bg-slate-50 text-slate-700'}`}>
+                                        <div className="flex items-center gap-2">
+                                            {filterType === 'structure' && (openFloors[loc.id] ? <Icon name="ChevronDown" size={16}/> : <Icon name="ChevronRight" size={16}/>)}
+                                            <span className="font-medium">{loc.name}</span>
+                                        </div>
+                                        {filterType !== 'structure' && <button onClick={(e)=>{e.stopPropagation(); onDeleteLocation(loc.id, loc.name)}} className="text-slate-400 hover:text-rose-500 p-1"><Icon name="Trash2" size={14}/></button>}
+                                    </div>
+                                    {filterType === 'structure' && openFloors[loc.id] && (
+                                        <div className="ml-4 pl-2 border-l-2 border-slate-100 mt-1 space-y-1">
+                                            {locations.filter(r => r.parentId === loc.id).map(room => (
+                                                <div key={room.id} onClick={() => setSelectedId(room.id)} className={`p-2 rounded-lg text-sm flex justify-between group ${selectedId===room.id ? 'bg-blue-100 text-blue-800' : 'hover:bg-gray-100 text-gray-600'}`}>
+                                                    <div className="flex items-center gap-2"><Icon name="CornerDownRight" size={14} className="opacity-50"/> {room.name}</div>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className={`text-[10px] px-1.5 py-0.5 rounded border ${getStatusColor(room.status || 'Vacant')}`}>{room.status || 'Vacant'}</span>
+                                                        <span className="text-xs bg-white px-1.5 py-0.5 rounded border">{getLocationItemCount(room.id)}</span>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            {locations.filter(sub => sub.parentId === loc.id).length === 0 && <div className="text-xs text-slate-400 italic p-2">No rooms added</div>}
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                            {relevantLocations.length === 0 && <p className="text-center text-slate-400 text-sm py-4">No locations found.</p>}
+                        </div>
+                    </div>
+                    <div className={`${!selectedLocation ? 'hidden lg:flex' : 'flex'} flex-1 bg-white rounded-xl shadow-sm border border-slate-100 flex-col overflow-hidden`}>
+                        {selectedLocation ? (
+                            <>
+                                <div className="p-6 border-b border-slate-100 bg-white z-10">
+                                    <div className="flex justify-between items-start mb-4">
+                                        <div className="flex items-center gap-3">
+                                            <button onClick={()=>setSelectedId(null)} className="lg:hidden p-2 -ml-2 text-slate-500"><Icon name="ArrowRightLeft" size={20}/></button>
+                                            <div>
+                                                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                                                    {selectedLocation.name}
+                                                    {selectedLocation.type === 'room' && (
+                                                        <select value={selectedLocation.status || 'Vacant'} onChange={(e) => onUpdateRoomStatus(selectedLocation.id, e.target.value)} className={`text-xs border border-slate-200 rounded px-2 py-1 bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500 font-normal ml-2`}>
+                                                            <option>Vacant</option><option>Occupied</option><option>Maintenance</option>
+                                                        </select>
+                                                    )}
+                                                </h2>
+                                                <p className="text-xs text-slate-400 font-mono mt-1">ID: {selectedLocation.id}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-3">
+                                        <button onClick={()=>onOpenAssignModal(selectedLocation.id)} className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition flex justify-center gap-2"><Icon name="Plus" size={16}/> Assign Items</button>
+                                        <button onClick={()=>onOpenTransferModal(selectedLocation.id)} className="flex-1 bg-white border border-slate-200 text-slate-700 py-2 rounded-lg text-sm font-medium hover:bg-slate-50 transition flex justify-center gap-2"><Icon name="ArrowRight" size={16}/> Transfer</button>
+                                        {(selectedLocation.type==='room'||selectedLocation.type==='box') && <button onClick={()=>onOpenSwapModal(selectedLocation.id)} className="flex-1 bg-white border border-slate-200 text-slate-700 py-2 rounded-lg text-sm font-medium hover:bg-slate-50 transition flex justify-center gap-2"><Icon name="RefreshCw" size={16}/> Swap</button>}
+                                    </div>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
+                                    {getItemsInLocation(selectedLocation.id).length === 0 ? (
+                                        <div className="h-full flex flex-col items-center justify-center text-slate-300"><Icon name="Package" size={64} className="mb-4 opacity-50" /><p className="text-sm font-medium">Empty location.</p></div>
+                                    ) : (
+                                        <div className="space-y-6">
+                                            {Object.entries(getDeepGroupedItems(selectedLocation.id)).map(([category, subCats]) => (
+                                                <div key={category} className="mb-6">
+                                                    <h4 className="flex items-center gap-2 font-bold text-sm text-gray-500 uppercase tracking-wider mb-3 border-b border-gray-100 pb-2"><Icon name="Tag" size={12}/> {category}</h4>
+                                                    <div className="pl-2 space-y-4">
+                                                        {Object.entries(subCats).map(([sub, products]) => (
+                                                            <div key={sub}>
+                                                                <h5 className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">{sub}</h5>
+                                                                {Object.entries(products).map(([prodName, items]) => {
+                                                                    const key = `${selectedLocation.id}-${prodName}`;
+                                                                    const isOpen = expandedGroups[key];
+                                                                    return (
+                                                                        <div key={key} className="border border-gray-200 rounded-lg bg-white overflow-hidden shadow-sm hover:shadow transition-shadow mb-2">
+                                                                            <div onClick={()=>toggleGroup(key)} className="p-3 flex justify-between items-center cursor-pointer hover:bg-slate-50 transition">
+                                                                                <div className="flex items-center gap-3">
+                                                                                    <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center"><Icon name="Package" size={16}/></div>
+                                                                                    <div><h4 className="text-sm font-semibold text-slate-800">{prodName}</h4><p className="text-xs text-slate-500">{items.length} units</p></div>
+                                                                                </div>
+                                                                                <div className="flex items-center gap-2">
+                                                                                    {items.some(i=>i.status!=='Active') && <div className="w-2 h-2 rounded-full bg-rose-500"></div>}
+                                                                                    <Icon name="ChevronDown" size={16} className={`text-slate-400 transition-transform ${isOpen?'rotate-180':''}`} />
+                                                                                </div>
+                                                                            </div>
+                                                                            {isOpen && (
+                                                                                <div className="bg-slate-50 p-2 space-y-2 border-t border-slate-100 inner-shadow">
+                                                                                    {items.map(item => (
+                                                                                        <div key={item.id} className="flex justify-between items-center p-2 bg-white rounded-lg border border-slate-200 shadow-sm text-sm">
+                                                                                            <div className="flex items-center gap-2">
+                                                                                                <span className="font-mono text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">{item.id}</span>
+                                                                                                {getItemStatusBadge(item.status)}
+                                                                                            </div>
+                                                                                            <div className="flex gap-1">
+                                                                                                {item.status === 'Defective' ? (
+                                                                                                    <button onClick={()=>onUpdateItemStatus(item.id, 'Active')} className="p-1.5 text-emerald-500 hover:bg-emerald-50 rounded" title="Set to Active"><Icon name="CheckCircle2" size={14}/></button>
+                                                                                                ) : (
+                                                                                                    <button onClick={()=>onReportIssue(item)} className="p-1.5 text-amber-500 hover:bg-amber-50 rounded" title="Report Issue"><Icon name="Wrench" size={14}/></button>
+                                                                                                )}
+                                                                                                <button onClick={()=>onDeleteItem(item.id, item.name)} className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded"><Icon name="Trash2" size={14}/></button>
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    ))}
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    )
+                                                                })}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </>
+                        ) : <div className="h-full flex flex-col items-center justify-center text-slate-300"><Icon name="Search" size={64} className="mb-4 opacity-50" /><p className="text-sm font-medium">Select a location to view contents</p></div>}
+                    </div>
+                </div>
+            );
+        };
+
+        const DefectView = ({ inventory, locations, onUpdateItemStatus, onDeleteItem }) => {
+            const defectiveItems = inventory.filter(i => i.status === 'Defective' || i.status === 'Pullout');
+            const groupedItems = groupByCategory(defectiveItems);
+
+            return (
+                <div className="bg-white rounded-lg shadow border border-gray-100 h-full overflow-y-auto p-4">
+                    <h3 className="font-bold text-lg mb-4 text-red-600 flex items-center gap-2"><Icon name="AlertOctagon"/> Defective / Pullout</h3>
+                    {defectiveItems.length === 0 ? <p className="text-center text-gray-400 py-10">No items reported.</p> : (
+                        Object.entries(groupedItems).map(([cat, subCats]) => (
+                             <div key={cat} className="mb-4">
+                                <h4 className="font-bold text-gray-700 border-b pb-1 mb-2">{cat}</h4>
+                                {Object.entries(subCats).map(([sub, items]) => (
+                                    <div key={sub} className="ml-4 mb-2">
+                                        <h5 className="text-sm font-semibold text-gray-500 mb-1">{sub}</h5>
+                                        <div className="space-y-2">
+                                            {items.map(item => (
+                                                <div key={item.id} className="flex justify-between items-center p-3 border rounded-lg bg-red-50 border-red-100">
+                                                    <div><div className="font-bold">{item.name}</div><div className="text-xs text-gray-500">ID: {item.id} • Loc: {getLocationName(locations, item.locationId)}</div></div>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-xs font-bold uppercase bg-white px-2 py-1 rounded border border-red-200 text-red-600">{item.status}</span>
+                                                        <button onClick={()=>onUpdateItemStatus(item.id, 'Active')} className="text-xs bg-green-600 text-white px-2 py-1 rounded flex gap-1 items-center"><Icon name="CheckCircle2" size={12}/> Fix</button>
+                                                        <button onClick={()=>onDeleteItem(item.id, item.name)} className="text-gray-400 hover:text-red-500"><Icon name="Trash2" size={16}/></button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                             </div>
+                        ))
+                    )}
+                </div>
+            )
+        };
+
+        const SettingsView = ({ locations, inventory, categories, catalog, logs, actions, staff }) => {
+            const [tab, setTab] = useState('equipment');
+            const [newLoc, setNewLoc] = useState({ name: '', type: 'room', parentId: '', status: 'Vacant' });
+            const [newCatName, setNewCatName] = useState('');
+            const [newSubCatName, setNewSubCatName] = useState('');
+            const [newProdName, setNewProdName] = useState('');
+            const [searchTerm, setSearchTerm] = useState('');
+            const [filterCat, setFilterCat] = useState('');
+            const [selectedCategory, setSelectedCategory] = useState(''); 
+            
+            // Staff State
+            const [newStaffName, setNewStaffName] = useState('');
+            const [newStaffRole, setNewStaffRole] = useState('Live Operator');
+
+            // Report State
+            const [reportOpts, setReportOpts] = useState({
+                inventory: true,
+                locations: true,
+                defects: true,
+                activity: false
+            });
+
+            const filteredCatalog = catalog.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()) && (filterCat ? p.category === filterCat : true));
+            const groupedCatalog = groupByCategory(filteredCatalog);
+
+            const availableFloors = useMemo(() => {
+                const allOptions = ["Basement 2", "Basement 1", "Ground Floor", "Mezzanine", "Roof Deck"];
+                for(let i=1; i<=50; i++) allOptions.push(`${i}${getOrdinalSuffix(i)} Floor`);
+                return allOptions.filter(opt => !locations.some(l => l.type === 'floor' && l.name === opt));
+            }, [locations]);
+
+            return (
+                <div className="bg-white rounded-xl shadow-sm border border-slate-100 h-full flex flex-col overflow-hidden">
+                    <div className="flex border-b border-slate-100 overflow-x-auto">
+                        {['equipment', 'location', 'backup', 'staff', 'report'].map(t => (
+                            <button key={t} onClick={()=>setTab(t)} className={`flex-1 min-w-[100px] py-4 text-sm font-medium border-b-2 transition-colors capitalize ${tab===t ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>{t}</button>
+                        ))}
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
+                        {/* ... (equipment and location tabs remain same) ... */}
+                        {tab === 'location' && (
+                            <div className="space-y-8">
+                                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                    <h4 className="font-bold text-slate-800 mb-4">Add Location</h4>
+                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Type</label>
+                                            <select className="w-full border-slate-200 rounded-lg text-sm p-2.5 bg-white" value={newLoc.type} onChange={e=>setNewLoc({...newLoc, type: e.target.value})}>
+                                                <option value="room">Room</option><option value="floor">Floor</option><option value="storage">Storage</option><option value="box">Box</option>
+                                            </select>
+                                        </div>
+                                        {newLoc.type === 'room' && (
+                                            <div>
+                                                <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Floor</label>
+                                                <select className="w-full border-slate-200 rounded-lg text-sm p-2.5 bg-white" value={newLoc.parentId} onChange={e=>setNewLoc({...newLoc, parentId: e.target.value})}>
+                                                    <option value="">Select...</option>
+                                                    {locations.filter(l=>l.type==='floor').map(f=><option key={f.id} value={f.id}>{f.name}</option>)}
+                                                </select>
+                                            </div>
+                                        )}
+                                        <div className="md:col-span-2">
+                                            <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">{newLoc.type==='floor'?'Level':'Name'}</label>
+                                            {newLoc.type === 'floor' ? (
+                                                <select className="w-full border-slate-200 rounded-lg text-sm p-2.5 bg-white" value={newLoc.name} onChange={e=>setNewLoc({...newLoc, name: e.target.value})}>
+                                                    <option value="">Select Level...</option>
+                                                    {availableFloors.map(f=><option key={f} value={f}>{f}</option>)}
+                                                </select>
+                                            ) : (
+                                                <input className="w-full border-slate-200 rounded-lg text-sm p-2.5" placeholder="e.g. Room 101" value={newLoc.name} onChange={e=>setNewLoc({...newLoc, name: e.target.value})} />
+                                            )}
+                                        </div>
+                                        <button onClick={()=>{
+                                            if(newLoc.name) {
+                                                actions.onAddLocation(newLoc.name, newLoc.type, newLoc.type==='room'?newLoc.parentId:null, 'Vacant');
+                                                setNewLoc({...newLoc, name:''});
+                                            } else alert("Name/Level is required");
+                                        }} className="bg-blue-600 text-white px-4 py-2.5 rounded-lg font-medium hover:bg-blue-700 w-full md:col-span-4">Create {newLoc.type}</button>
+                                    </div>
+                                </div>
+                                
+                                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                    <h4 className="font-bold text-slate-800 mb-4">Existing Locations</h4>
+                                    <div className="overflow-x-auto rounded-lg border border-slate-100">
+                                        <table className="w-full text-sm text-left">
+                                            <thead className="bg-slate-50 text-slate-500 font-semibold"><tr><th className="p-3">Type</th><th className="p-3">Name</th><th className="p-3">Details</th><th className="p-3 text-right">Action</th></tr></thead>
+                                            <tbody className="divide-y divide-slate-100">
+                                                {locations.filter(l=>l.type==='floor').length > 0 && <tr><td colSpan="4" className="bg-slate-50 px-3 py-1 text-xs font-bold text-slate-500 uppercase">Floors & Rooms</td></tr>}
+                                                {locations.filter(l=>l.type==='floor').map(floor => (
+                                                    <React.Fragment key={floor.id}>
+                                                        <tr className="hover:bg-slate-50 font-medium bg-slate-50/50">
+                                                            <td className="p-3"><Icon name="Building2" size={14}/></td>
+                                                            <td className="p-3">{floor.name}</td>
+                                                            <td className="p-3 text-xs text-slate-500">ID: {floor.id}</td>
+                                                            <td className="p-3 text-right">
+                                                                <button onClick={()=>actions.onEditLocation(floor)} className="text-slate-400 hover:text-blue-500 mr-2"><Icon name="Edit2" size={16}/></button>
+                                                                <button onClick={()=>actions.onDeleteLocation(floor.id, floor.name)} className="text-slate-400 hover:text-rose-500"><Icon name="Trash2" size={16}/></button>
+                                                            </td>
+                                                        </tr>
+                                                        {locations.filter(r=>r.parentId===floor.id).map(room => (
+                                                             <tr key={room.id} className="hover:bg-slate-50">
+                                                                <td className="p-3 pl-8 text-slate-400 text-xs uppercase">Room</td>
+                                                                <td className="p-3 pl-8">{room.name}</td>
+                                                                <td className="p-3 text-xs text-slate-500">ID: {room.id}</td>
+                                                                <td className="p-3 text-right">
+                                                                    <button onClick={()=>actions.onEditLocation(room)} className="text-slate-400 hover:text-blue-500 mr-2"><Icon name="Edit2" size={16}/></button>
+                                                                    <button onClick={()=>actions.onDeleteLocation(room.id, room.name)} className="text-slate-400 hover:text-rose-500"><Icon name="Trash2" size={16}/></button>
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </React.Fragment>
+                                                ))}
+                                                {locations.filter(l=>l.type==='storage').length > 0 && <tr><td colSpan="4" className="bg-slate-50 px-3 py-1 text-xs font-bold text-slate-500 uppercase">Storage</td></tr>}
+                                                {locations.filter(l=>l.type==='storage').map(loc => (
+                                                    <tr key={loc.id} className="hover:bg-slate-50">
+                                                        <td className="p-3"><Icon name="Warehouse" size={14}/></td>
+                                                        <td className="p-3">{loc.name}</td>
+                                                        <td className="p-3 text-xs text-slate-500">ID: {loc.id}</td>
+                                                        <td className="p-3 text-right">
+                                                            <button onClick={()=>actions.onEditLocation(loc)} className="text-slate-400 hover:text-blue-500 mr-2"><Icon name="Edit2" size={16}/></button>
+                                                            <button onClick={()=>actions.onDeleteLocation(loc.id, loc.name)} className="text-slate-400 hover:text-rose-500"><Icon name="Trash2" size={16}/></button>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                                {locations.filter(l=>l.type==='box').length > 0 && <tr><td colSpan="4" className="bg-slate-50 px-3 py-1 text-xs font-bold text-slate-500 uppercase">Boxes</td></tr>}
+                                                {locations.filter(l=>l.type==='box').map(loc => (
+                                                    <tr key={loc.id} className="hover:bg-slate-50">
+                                                        <td className="p-3"><Icon name="Box" size={14}/></td>
+                                                        <td className="p-3">{loc.name}</td>
+                                                        <td className="p-3 text-xs text-slate-500">ID: {loc.id}</td>
+                                                        <td className="p-3 text-right">
+                                                            <button onClick={()=>actions.onEditLocation(loc)} className="text-slate-400 hover:text-blue-500 mr-2"><Icon name="Edit2" size={16}/></button>
+                                                            <button onClick={()=>actions.onDeleteLocation(loc.id, loc.name)} className="text-slate-400 hover:text-rose-500"><Icon name="Trash2" size={16}/></button>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                                {locations.length === 0 && <tr><td colSpan="4" className="p-6 text-center text-slate-400">No locations added yet.</td></tr>}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {tab === 'equipment' && (
+                             <div className="space-y-6">
+                                 {/* Grid for Categories & Sub-Categories */}
+                                 <div className="grid md:grid-cols-2 gap-6">
+                                     <div className="bg-white p-6 rounded-xl border border-slate-200 h-96 flex flex-col">
+                                         <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Icon name="Layers" size={18} className="text-blue-500"/> Categories</h4>
+                                         <div className="flex gap-2 mb-4">
+                                             <input className="flex-1 border-slate-200 rounded-lg p-2 text-sm border" placeholder="New Category Name" value={newCatName} onChange={e=>setNewCatName(e.target.value)} />
+                                             <button onClick={()=>{if(newCatName) {actions.onAddCategory(newCatName); setNewCatName('')}}} className="bg-blue-600 text-white px-3 rounded-lg text-sm">Add</button>
+                                         </div>
+                                         <div className="flex-1 overflow-y-auto space-y-1 pr-1">
+                                             {Object.keys(categories).length === 0 && <p className="text-xs text-slate-400 italic">No categories yet.</p>}
+                                             {Object.keys(categories).map(c=>(
+                                                 <div key={c} onClick={()=>setSelectedCategory(c)} className={`flex justify-between items-center p-2 rounded-lg text-sm cursor-pointer border ${selectedCategory===c ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-slate-50 border-slate-100 hover:border-blue-200'}`}>
+                                                     <span>{c}</span>
+                                                     <div className="flex gap-1">
+                                                         <button onClick={(e)=>{e.stopPropagation(); actions.onEditCategory(c)}} className="text-blue-400 hover:text-blue-600 p-1"><Icon name="Edit2" size={14}/></button>
+                                                         <button onClick={(e)=>{e.stopPropagation(); actions.onDeleteCategory(c)}} className="text-red-400 hover:text-red-600 p-1"><Icon name="Trash2" size={14}/></button>
+                                                     </div>
+                                                 </div>
+                                             ))}
+                                         </div>
+                                     </div>
+
+                                     <div className="bg-white p-6 rounded-xl border border-slate-200 h-96 flex flex-col">
+                                         <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Icon name="Tag" size={18} className="text-green-500"/> Sub-Categories</h4>
+                                         <div className="bg-slate-50 p-2 rounded text-xs text-slate-500 mb-2">Selected: <strong>{selectedCategory || 'None'}</strong></div>
+                                         <div className="flex gap-2 mb-4">
+                                             <input className="flex-1 border-slate-200 rounded-lg p-2 text-sm border" placeholder="Sub-Category Name" value={newSubCatName} onChange={e=>setNewSubCatName(e.target.value)} disabled={!selectedCategory} />
+                                             <button onClick={()=>{if(selectedCategory&&newSubCatName){actions.onAddSubCategory(selectedCategory,newSubCatName); setNewSubCatName('')}}} disabled={!selectedCategory} className="bg-green-600 text-white px-3 rounded-lg text-sm disabled:opacity-50">Add</button>
+                                         </div>
+                                         <div className="flex-1 overflow-y-auto space-y-1 pr-1">
+                                             {!selectedCategory ? <p className="text-xs text-slate-400 italic text-center mt-10">Select a category above to view/edit sub-categories.</p> :
+                                                categories[selectedCategory]?.length === 0 ? <p className="text-xs text-slate-400 italic">No sub-categories defined.</p> :
+                                                categories[selectedCategory]?.map(sub => (
+                                                    <div key={sub} className="flex justify-between items-center p-2 bg-slate-50 rounded-lg text-sm border border-slate-100">
+                                                        <span>{sub}</span>
+                                                        <div className="flex gap-1">
+                                                            <button onClick={()=>actions.onEditSubCategory(selectedCategory, sub)} className="text-blue-400 hover:text-blue-600 p-1"><Icon name="Edit2" size={14}/></button>
+                                                            <button onClick={()=>actions.onDeleteSubCategory(selectedCategory, sub)} className="text-red-400 hover:text-red-600 p-1"><Icon name="Trash2" size={14}/></button>
+                                                        </div>
+                                                    </div>
+                                                ))
+                                             }
+                                         </div>
+                                     </div>
+                                 </div>
+
+                                 {/* RIGHT COLUMN: Product Catalog (Full Height) */}
+                                 <div className="bg-white p-6 rounded-xl border border-slate-200 flex flex-col h-full overflow-hidden">
+                                     <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Icon name="Package" size={18} className="text-orange-500"/> Product Catalog</h4>
+                                     
+                                     {/* Add Form */}
+                                     <div className="bg-slate-50 p-4 rounded-lg mb-6 border border-slate-100 shrink-0">
+                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                            <div className="col-span-2">
+                                                <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Product Name</label>
+                                                <input className="w-full border border-slate-200 rounded-lg p-2 text-sm" value={newProdName} onChange={e=>setNewProdName(e.target.value)} placeholder="e.g. Shure SM58" />
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Category</label>
+                                                <select id="pCat" className="w-full border border-slate-200 rounded-lg p-2 text-sm" onChange={e=>{
+                                                    const s=document.getElementById('pSub'); s.innerHTML='<option value="">Select Sub-Category</option>';
+                                                    (categories[e.target.value]||[]).forEach(x=>s.innerHTML+=`<option value="${x}">${x}</option>`);
+                                                }}><option value="">Select Category</option>{Object.keys(categories).map(c=><option key={c} value={c}>{c}</option>)}</select>
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Sub-Category</label>
+                                                <select id="pSub" className="w-full border border-slate-200 rounded-lg p-2 text-sm"><option value="">Select Sub-Category</option></select>
+                                            </div>
+                                         </div>
+                                         <button onClick={()=>{
+                                             const cat=document.getElementById('pCat').value; 
+                                             const sub=document.getElementById('pSub').value;
+                                             if(newProdName&&cat&&sub) { actions.onAddProduct(newProdName, cat, sub); setNewProdName(''); }
+                                             else alert("Please fill all fields");
+                                         }} className="w-full bg-orange-600 text-white py-2 rounded-lg font-medium hover:bg-orange-700 transition">Add Product to Catalog</button>
+                                     </div>
+
+                                     {/* Search & List */}
+                                     <div className="flex gap-2 mb-4 shrink-0">
+                                         <div className="relative flex-1">
+                                             <Icon name="Search" size={16} className="absolute left-3 top-2.5 text-slate-400" />
+                                             <input className="w-full pl-10 pr-3 py-2 border border-slate-200 rounded-lg text-sm" placeholder="Search products..." value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} />
+                                         </div>
+                                         <button onClick={()=>{setSearchTerm('');setFilterCat('');}} className="px-3 py-2 text-sm text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50">Clear Filter</button>
+                                     </div>
+
+                                     <div className="flex-1 overflow-y-auto border border-slate-200 rounded-lg p-2 min-h-[300px]">
+                                         {Object.keys(groupedCatalog).length === 0 ? <p className="text-center text-slate-400 py-10 text-sm">No products found.</p> : 
+                                           Object.entries(groupedCatalog).map(([cat, subs]) => (
+                                               <div key={cat} className="border-b border-slate-100 last:border-0 mb-2">
+                                                   <div className="bg-blue-50/50 px-4 py-2 text-xs font-bold text-blue-700 uppercase tracking-wide flex items-center gap-2"><Icon name="Layers" size={12}/> {cat}</div>
+                                                   {Object.entries(subs).map(([sub, items]) => (
+                                                       <div key={sub}>
+                                                           <div className="bg-slate-50 px-4 py-1.5 text-[10px] font-bold text-slate-500 uppercase flex items-center gap-2 pl-8 border-t border-slate-100"><Icon name="CornerDownRight" size={10}/> {sub}</div>
+                                                           {items.map(p => {
+                                                               // NEW: Calculate Stock
+                                                               const stockCount = inventory.filter(i => i.productId === p.id && i.status === 'Active').length;
+                                                               return (
+                                                                   <div key={p.id} className="flex justify-between items-center px-4 py-3 hover:bg-white border-t border-slate-50 text-sm pl-8">
+                                                                       <div className="flex flex-col">
+                                                                           <span className="font-medium text-slate-700">{p.name}</span>
+                                                                           <span className="text-[10px] text-slate-400 font-mono">Total Stock: {stockCount}</span>
+                                                                       </div>
+                                                                       <div className="flex gap-2">
+                                                                           <button onClick={()=>actions.onAddStock(p)} className="text-xs bg-emerald-50 text-emerald-600 px-2 py-1 rounded border border-emerald-100 font-medium hover:bg-emerald-100 transition">+ Stock</button>
+                                                                           <button onClick={()=>actions.onEditProduct(p)} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded"><Icon name="Edit2" size={14}/></button>
+                                                                           <button onClick={()=>actions.onDeleteProduct(p.id, p.name)} className="p-1.5 text-rose-400 hover:bg-rose-50 rounded"><Icon name="Trash2" size={14}/></button>
+                                                                       </div>
+                                                                   </div>
+                                                               )
+                                                           })}
+                                                       </div>
+                                                   ))}
+                                               </div>
+                                           ))
+                                         }
+                                     </div>
+                                 </div>
+                             </div>
+                         )}
+
+                         {/* STAFF TAB */}
+                         {tab === 'staff' && (
+                             <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm max-w-4xl mx-auto">
+                                 <h4 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Icon name="Users" size={20} className="text-indigo-500"/> Staff Management</h4>
+                                 
+                                 <div className="grid md:grid-cols-3 gap-6 mb-8">
+                                     <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 md:col-span-1">
+                                         <h5 className="font-bold text-sm text-slate-700 mb-3">Add New Staff</h5>
+                                         <div className="space-y-3">
+                                             <div>
+                                                 <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Nickname</label>
+                                                 <input className="w-full border border-slate-200 rounded-lg p-2 text-sm" placeholder="e.g. John" value={newStaffName} onChange={e=>setNewStaffName(e.target.value)} />
+                                             </div>
+                                             <div>
+                                                 <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Role</label>
+                                                 <select className="w-full border border-slate-200 rounded-lg p-2 text-sm bg-white" value={newStaffRole} onChange={e=>setNewStaffRole(e.target.value)}>
+                                                     <option value="Lead">Lead (Admin)</option>
+                                                     <option value="Live Operator">Live Operator</option>
+                                                 </select>
+                                             </div>
+                                             <button onClick={()=>{
+                                                 if(newStaffName) {
+                                                     actions.onAddStaff(newStaffName, newStaffRole);
+                                                     setNewStaffName('');
+                                                 } else alert("Name is required");
+                                             }} className="w-full bg-indigo-600 text-white py-2 rounded-lg font-medium hover:bg-indigo-700 transition">Create Account</button>
+                                         </div>
+                                     </div>
+                                     
+                                     <div className="md:col-span-2">
+                                         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                                             <table className="w-full text-sm text-left">
+                                                 <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-100">
+                                                     <tr><th className="p-3">Nickname</th><th className="p-3">Role</th><th className="p-3 text-right">Action</th></tr>
+                                                 </thead>
+                                                 <tbody className="divide-y divide-slate-100">
+                                                     {staff.map(s => (
+                                                         <tr key={s.id} className="hover:bg-slate-50">
+                                                             <td className="p-3 font-medium text-slate-800">{s.name}</td>
+                                                             <td className="p-3"><span className={`px-2 py-1 rounded text-xs font-bold ${s.role==='Lead'?'bg-indigo-50 text-indigo-600':'bg-emerald-50 text-emerald-600'}`}>{s.role}</span></td>
+                                                             <td className="p-3 text-right">
+                                                                 <button onClick={()=>actions.onEditStaff(s)} className="text-slate-400 hover:text-blue-500 mr-2"><Icon name="Edit2" size={16}/></button>
+                                                                 <button onClick={()=>actions.onDeleteStaff(s.id, s.name)} className="text-slate-400 hover:text-red-500"><Icon name="Trash2" size={16}/></button>
+                                                             </td>
+                                                         </tr>
+                                                     ))}
+                                                     {staff.length === 0 && <tr><td colSpan="3" className="p-4 text-center text-slate-400">No staff accounts found.</td></tr>}
+                                                 </tbody>
+                                             </table>
+                                         </div>
+                                     </div>
+                                 </div>
+                             </div>
+                         )}
+
+                         {/* Backup & Report tabs logic remains same */}
+                         {tab === 'backup' && (
+                             <div className="grid md:grid-cols-2 gap-6">
+                                 <button onClick={()=>actions.onConfirmAction('download', 'Download Backup', 'This will download a JSON file of your current data.', actions.onBackup)} className="bg-blue-50 border-2 border-dashed border-blue-200 rounded-xl p-8 flex flex-col items-center justify-center text-blue-600 hover:bg-blue-100 transition"><Icon name="Download" size={32}/><span className="mt-2 font-bold">Download Backup</span></button>
+                                 <label onClick={()=>actions.onConfirmAction('upload', 'Restore Backup', 'This will overwrite your current data. Continue?', ()=>document.getElementById('resFile').click())} className="bg-emerald-50 border-2 border-dashed border-emerald-200 rounded-xl p-8 flex flex-col items-center justify-center text-emerald-600 hover:bg-emerald-100 transition cursor-pointer"><Icon name="Upload" size={32}/><span className="mt-2 font-bold">Restore Backup</span><input id="resFile" type="file" hidden onChange={e=>actions.onRestore(e.target.files[0])}/></label>
+                                 <button onClick={actions.onFactoryReset} className="md:col-span-2 p-4 border border-rose-200 text-rose-600 rounded-xl hover:bg-rose-50 font-bold flex items-center justify-center gap-2"><Icon name="RotateCcw" size={18}/> Factory Reset</button>
+                             </div>
+                         )}
+                         {tab === 'report' && (
+                             <div className="bg-white p-8 rounded-xl border border-slate-200 text-center max-w-md mx-auto mt-10">
+                                 <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4"><Icon name="FileText" size={32}/></div>
+                                 <h3 className="text-xl font-bold text-slate-800">Generate Report</h3>
+                                 <p className="text-slate-500 mb-6 text-sm">Select report components to generate a comprehensive PDF report.</p>
+                                 
+                                 <div className="grid grid-cols-2 gap-4 mb-6 text-left max-w-xs mx-auto">
+                                     <label className="flex items-center gap-2 p-2 border rounded hover:bg-slate-50 cursor-pointer">
+                                         <input type="checkbox" checked={reportOpts.inventory} onChange={e=>setReportOpts({...reportOpts, inventory: e.target.checked})} className="rounded text-blue-600" />
+                                         <span className="text-sm font-medium">Inventory</span>
+                                     </label>
+                                     <label className="flex items-center gap-2 p-2 border rounded hover:bg-slate-50 cursor-pointer">
+                                         <input type="checkbox" checked={reportOpts.locations} onChange={e=>setReportOpts({...reportOpts, locations: e.target.checked})} className="rounded text-blue-600" />
+                                         <span className="text-sm font-medium">Locations</span>
+                                     </label>
+                                     <label className="flex items-center gap-2 p-2 border rounded hover:bg-slate-50 cursor-pointer">
+                                         <input type="checkbox" checked={reportOpts.defects} onChange={e=>setReportOpts({...reportOpts, defects: e.target.checked})} className="rounded text-blue-600" />
+                                         <span className="text-sm font-medium">Defects</span>
+                                     </label>
+                                     <label className="flex items-center gap-2 p-2 border rounded hover:bg-slate-50 cursor-pointer">
+                                         <input type="checkbox" checked={reportOpts.activity} onChange={e=>setReportOpts({...reportOpts, activity: e.target.checked})} className="rounded text-blue-600" />
+                                         <span className="text-sm font-medium">Activity Log</span>
+                                     </label>
+                                 </div>
+
+                                 <button onClick={()=>actions.onGenerateReport(reportOpts)} className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition">Download PDF</button>
+                             </div>
+                         )}
+                    </div>
+                </div>
+            );
+        };
+
+        const EditLocationContent = ({ data, locations, onSave, onClose }) => {
+            const [name, setName] = useState(data.name);
+            const [parentId, setParentId] = useState(data.parentId || '');
+            const [status, setStatus] = useState(data.status || 'Vacant');
+            return (
+                <div className="p-6">
+                    <h3 className="font-bold text-lg mb-4">Edit Location</h3>
+                    <div className="space-y-4">
+                        <div><label className="text-xs font-bold text-slate-500 uppercase">Name</label><input className="w-full border p-2 rounded text-sm" value={name} onChange={e=>setName(e.target.value)}/></div>
+                        {data.type === 'room' && (
+                            <>
+                                <div><label className="text-xs font-bold text-slate-500 uppercase">Parent Floor</label><select className="w-full border p-2 rounded text-sm" value={parentId} onChange={e=>setParentId(e.target.value)}><option value="">Select Floor</option>{locations.filter(l=>l.type==='floor').map(f=><option key={f.id} value={f.id}>{f.name}</option>)}</select></div>
+                                <div><label className="text-xs font-bold text-slate-500 uppercase">Status</label><select className="w-full border p-2 rounded text-sm" value={status} onChange={e=>setStatus(e.target.value)}><option>Vacant</option><option>Occupied</option><option>Maintenance</option></select></div>
+                            </>
+                        )}
+                    </div>
+                    <div className="flex justify-end gap-2 mt-6">
+                            <button onClick={onClose} className="px-4 py-2 border rounded">Cancel</button>
+                            <button onClick={()=>onSave({id: data.id, name, parentId, status})} className="px-4 py-2 bg-blue-600 text-white rounded">Save</button>
+                    </div>
+                </div>
+            );
+        };
+
+        const AssignItemsContent = ({ catalog, inventory, locations, targetId, onSave, onClose, staff }) => {
+            const [quantities, setQuantities] = useState({});
+            const [collapsed, setCollapsed] = useState({});
+
+            const grouped = useMemo(() => groupByCategory(catalog), [catalog]);
+
+            const toggle = (key) => setCollapsed(prev => ({...prev, [key]: !prev[key]}));
+
+            return (
+                <div className="flex flex-col h-[80vh] w-full"> 
+                    <div className="p-4 border-b bg-white">
+                        <h3 className="font-bold text-lg text-slate-800">Assign Items</h3>
+                        <p className="text-xs text-slate-500">Select items from Storage to move to this location.</p>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50">
+                        {Object.entries(grouped).length === 0 && <p className="text-center text-slate-400 mt-10">Catalog is empty.</p>}
+                        {Object.entries(grouped).map(([cat, subCats]) => {
+                            const isCatCollapsed = collapsed[cat];
+                            return (
+                                <div key={cat} className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+                                    <div 
+                                        className="p-3 bg-slate-100 font-bold text-slate-700 flex justify-between items-center cursor-pointer select-none hover:bg-slate-200 transition-colors"
+                                        onClick={() => toggle(cat)}
+                                    >
+                                        <span className="flex items-center gap-2 text-sm uppercase tracking-wide"><Icon name="Layers" size={14} className="text-slate-500"/> {cat}</span>
+                                        <Icon name="ChevronDown" size={16} className={`text-slate-400 transition-transform duration-200 ${isCatCollapsed ? '-rotate-90' : ''}`}/>
+                                    </div>
+                                    {!isCatCollapsed && (
+                                        <div className="divide-y divide-slate-100">
+                                            {Object.entries(subCats).map(([sub, products]) => {
+                                                const subKey = `${cat}-${sub}`;
+                                                const isSubCollapsed = collapsed[subKey];
+                                                return (
+                                                    <div key={sub}>
+                                                        <div 
+                                                            className="p-2 pl-8 bg-slate-50/50 text-xs font-bold text-slate-500 uppercase flex justify-between items-center cursor-pointer select-none hover:bg-slate-100 transition-colors"
+                                                            onClick={() => toggle(subKey)}
+                                                        >
+                                                            <span className="flex items-center gap-2"><Icon name="CornerDownRight" size={12}/> {sub}</span>
+                                                            <Icon name="ChevronDown" size={14} className={`transition-transform duration-200 ${isSubCollapsed ? '-rotate-90' : ''}`}/>
+                                                        </div>
+                                                        {!isSubCollapsed && (
+                                                            <div className="p-2 pl-6 space-y-1">
+                                                                {products.map(p => {
+                                                                    const avail = inventory.filter(i => i.productId === p.id && locations.find(l => l.id === i.locationId)?.type === 'storage' && i.status === 'Active').length;
+                                                                    
+                                                                    return (
+                                                                        <div key={p.id} className={`flex justify-between items-center p-2 rounded border border-transparent ${avail > 0 ? 'hover:bg-blue-50 hover:border-blue-100' : 'opacity-60'}`}>
+                                                                            <div className="flex flex-col">
+                                                                                <span className="text-sm font-medium text-slate-700">{p.name}</span>
+                                                                                <span className={`text-[10px] ${avail > 0 ? 'text-emerald-600 font-medium' : 'text-slate-400'}`}>
+                                                                                    {avail > 0 ? `${avail} in Storage` : 'Out of Stock'}
+                                                                                </span>
+                                                                            </div>
+                                                                            {avail > 0 && (
+                                                                                <div className="flex items-center gap-2">
+                                                                                     <input 
+                                                                                        type="number" 
+                                                                                        min="0" 
+                                                                                        max={avail} 
+                                                                                        className="w-16 p-1.5 text-center text-sm border border-slate-200 rounded-md focus:ring-2 focus:ring-blue-500 outline-none" 
+                                                                                        placeholder="0"
+                                                                                        value={quantities[p.id] || ''}
+                                                                                        onChange={e => {
+                                                                                            let val = parseInt(e.target.value);
+                                                                                            if(isNaN(val)) val = '';
+                                                                                            else val = Math.max(0, Math.min(val, avail));
+                                                                                            setQuantities({...quantities, [p.id]: val});
+                                                                                        }}
+                                                                                    />
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <div className="p-4 border-t bg-white space-y-3">
+                        <div className="flex gap-3">
+                            <button onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-lg font-medium text-slate-600 hover:bg-slate-50 transition-colors">Cancel</button>
+                            <button 
+                                onClick={() => {
+                                    const sel = {};
+                                    Object.entries(quantities).forEach(([k,v]) => { if(v>0) sel[k]=v; });
+                                    if(Object.keys(sel).length === 0) return alert("Please select items.");
+                                    onSave(targetId, sel);
+                                }} 
+                                className="flex-1 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 shadow-lg shadow-blue-200 transition-colors"
+                            >
+                                Confirm Assignment
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const TransferItemsContent = ({ inventory, locations, sourceId, onTransfer, onClose, staff }) => {
+            const [destinationId, setDestinationId] = useState('');
+            const [selectedItems, setSelectedItems] = useState({});
+            const [collapsed, setCollapsed] = useState({});
+
+            const sourceItems = useMemo(() => inventory.filter(i => i.locationId === sourceId), [inventory, sourceId]);
+            
+            const grouped = useMemo(() => {
+                const groups = {};
+                sourceItems.forEach(item => {
+                    const cat = item.category || 'Uncategorized';
+                    const sub = item.subCategory || 'General';
+                    const prod = item.name;
+                    
+                    if(!groups[cat]) groups[cat] = {};
+                    if(!groups[cat][sub]) groups[cat][sub] = {};
+                    if(!groups[cat][sub][prod]) groups[cat][sub][prod] = [];
+                    
+                    groups[cat][sub][prod].push(item);
+                });
+                return groups;
+            }, [sourceItems]);
+
+            const toggle = (key) => setCollapsed(prev => ({...prev, [key]: !prev[key]}));
+            
+            const handleCheckbox = (id, checked) => {
+                setSelectedItems(prev => ({...prev, [id]: checked}));
+            };
+
+            const selectedCount = Object.values(selectedItems).filter(Boolean).length;
+
+            return (
+                <div className="flex flex-col h-[80vh] w-full">
+                    <div className="p-4 border-b bg-white">
+                        <h3 className="font-bold text-lg text-slate-800">Transfer Items</h3>
+                        <p className="text-xs text-slate-500">Move selected items to another location.</p>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50">
+                         {sourceItems.length === 0 ? <p className="text-center text-slate-400 mt-10">This location is empty.</p> :
+                            Object.entries(grouped).map(([cat, subCats]) => {
+                            const isCatCollapsed = collapsed[cat];
+                            return (
+                                <div key={cat} className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+                                    <div 
+                                        className="p-3 bg-slate-100 font-bold text-slate-700 flex justify-between items-center cursor-pointer select-none hover:bg-slate-200 transition-colors"
+                                        onClick={() => toggle(cat)}
+                                    >
+                                        <span className="flex items-center gap-2 text-sm uppercase tracking-wide"><Icon name="Layers" size={14} className="text-slate-500"/> {cat}</span>
+                                        <Icon name="ChevronDown" size={16} className={`text-slate-400 transition-transform duration-200 ${isCatCollapsed ? '-rotate-90' : ''}`}/>
+                                    </div>
+                                    {!isCatCollapsed && (
+                                        <div className="divide-y divide-slate-100">
+                                            {Object.entries(subCats).map(([sub, products]) => {
+                                                const subKey = `${cat}-${sub}`;
+                                                const isSubCollapsed = collapsed[subKey];
+                                                return (
+                                                    <div key={sub}>
+                                                        <div 
+                                                            className="p-2 pl-8 bg-slate-50/50 text-xs font-bold text-slate-500 uppercase flex justify-between items-center cursor-pointer select-none hover:bg-slate-100 transition-colors"
+                                                            onClick={() => toggle(subKey)}
+                                                        >
+                                                            <span className="flex items-center gap-2"><Icon name="CornerDownRight" size={12}/> {sub}</span>
+                                                            <Icon name="ChevronDown" size={14} className={`transition-transform duration-200 ${isSubCollapsed ? '-rotate-90' : ''}`}/>
+                                                        </div>
+                                                        {!isSubCollapsed && (
+                                                            <div className="p-2 pl-6 space-y-2">
+                                                                {Object.entries(products).map(([prodName, items]) => (
+                                                                    <div key={prodName} className="mb-2">
+                                                                        <div className="text-xs font-semibold text-slate-600 mb-1 ml-1">{prodName}</div>
+                                                                        <div className="space-y-1">
+                                                                            {items.map(item => (
+                                                                                <label key={item.id} className="flex items-center gap-3 p-2 border border-slate-100 rounded hover:bg-blue-50 hover:border-blue-100 cursor-pointer transition-colors bg-white">
+                                                                                    <input 
+                                                                                        type="checkbox" 
+                                                                                        className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 border-gray-300"
+                                                                                        checked={!!selectedItems[item.id]}
+                                                                                        onChange={(e) => handleCheckbox(item.id, e.target.checked)}
+                                                                                    />
+                                                                                    <div className="flex flex-col">
+                                                                                        <span className="text-xs font-mono text-slate-500 bg-slate-100 px-1 rounded w-fit">{item.id}</span>
+                                                                                    </div>
+                                                                                    <span className="text-sm font-medium text-slate-700">{item.name}</span>
+                                                                                </label>
+                                                                            ))}
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <div className="p-4 border-t bg-white space-y-3">
+                         <div className="flex gap-2 items-center">
+                             <div className="flex-1">
+                                <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Destination</label>
+                                <select 
+                                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-slate-50 focus:ring-2 focus:ring-blue-500 outline-none"
+                                    value={destinationId}
+                                    onChange={(e) => setDestinationId(e.target.value)}
+                                >
+                                    <option value="">Select Location...</option>
+                                    <optgroup label="Status Update">
+                                        <option value="defect_status">Mark as Defective / Pullout</option>
+                                    </optgroup>
+                                    <optgroup label="Floors & Rooms">
+                                        {locations.filter(l=>l.type==='floor').map(f => (
+                                            <React.Fragment key={f.id}>
+                                                {locations.filter(r=>r.parentId===f.id && r.id!==sourceId).map(r=>(
+                                                    <option key={r.id} value={r.id}>{f.name} - {r.name}</option>
+                                                ))}
+                                            </React.Fragment>
+                                        ))}
+                                    </optgroup>
+                                    <optgroup label="Storage">
+                                        {locations.filter(l=>l.type==='storage'&&l.id!==sourceId).map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
+                                    </optgroup>
+                                    <optgroup label="Boxes">
+                                        {locations.filter(l=>l.type==='box'&&l.id!==sourceId).map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
+                                    </optgroup>
+                                </select>
+                             </div>
+                         </div>
+                        <div className="flex gap-3">
+                            <button onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-lg font-medium text-slate-600 hover:bg-slate-50 transition-colors">Cancel</button>
+                            <button 
+                                onClick={() => {
+                                    if(destinationId && selectedCount > 0) {
+                                        onTransfer(sourceId, destinationId, selectedItems);
+                                    } else {
+                                        alert("Please select items and a destination.");
+                                    }
+                                }} 
+                                disabled={!destinationId || selectedCount === 0}
+                                className="flex-1 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 shadow-lg shadow-blue-200 transition-colors disabled:opacity-50 disabled:shadow-none"
+                            >
+                                Transfer {selectedCount > 0 ? `(${selectedCount})` : ''}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const SwapContent = ({ locations, staff, sourceId, onSwap, onClose }) => {
+            const [targetId, setTargetId] = useState('');
+
+            const sourceLoc = locations.find(l => l.id === sourceId);
+            const targets = locations.filter(l => l.id !== sourceId && l.type === sourceLoc?.type);
+
+            return (
+                <div className="p-6">
+                    <h3 className="font-bold text-lg mb-4">Swap Location Content</h3>
+                    <div className="space-y-4">
+                        <div>
+                            <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Swap With</label>
+                            <select 
+                                className="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-slate-50 focus:ring-2 focus:ring-blue-500 outline-none"
+                                value={targetId} 
+                                onChange={e => setTargetId(e.target.value)}
+                            >
+                                <option value="">Select Target...</option>
+                                <optgroup label="Same Type Locations">
+                                    {targets.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                                </optgroup>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="flex gap-3 mt-6">
+                        <button onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-lg font-medium text-slate-600 hover:bg-slate-50 transition-colors">Cancel</button>
+                        <button 
+                            onClick={() => {
+                                if(targetId) onSwap(sourceId, targetId);
+                            }} 
+                            disabled={!targetId}
+                            className="flex-1 py-2.5 bg-orange-600 text-white rounded-lg font-medium hover:bg-orange-700 shadow-lg shadow-orange-200 transition-colors disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed"
+                        >
+                            Swap
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        const LogDetailsContent = ({ log, onClose }) => {
+            const grouped = useMemo(() => groupByCategory(log.items || []), [log.items]);
+            return (
+                <div className="flex flex-col h-[70vh]">
+                    <div className="p-4 border-b bg-white">
+                        <h3 className="font-bold text-lg text-slate-800">Activity Details</h3>
+                        <p className="text-xs text-slate-500">{log.action} - {formatTimestamp(log.timestamp)}</p>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4 bg-slate-50">
+                        {Object.entries(grouped).map(([cat, subCats]) => (
+                            <div key={cat} className="mb-4 bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm">
+                                <div className="bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600 uppercase tracking-wide">{cat}</div>
+                                {Object.entries(subCats).map(([sub, products]) => (
+                                    <div key={sub} className="border-t border-slate-100">
+                                        <div className="bg-slate-50 px-3 py-1.5 text-[10px] font-bold text-slate-500 uppercase border-b border-slate-100">{sub}</div>
+                                        {products.map(item => (
+                                            <div key={item.id} className="flex justify-between p-2 border-b border-slate-100 last:border-0 text-sm">
+                                                <span>{item.name}</span>
+                                                <span className="font-mono text-xs bg-slate-100 px-1 rounded text-slate-500">{item.id}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ))}
+                            </div>
+                        ))}
+                    </div>
+                    <div className="p-4 border-t bg-white">
+                        <button onClick={onClose} className="w-full py-2 bg-slate-800 text-white rounded-lg">Close</button>
+                    </div>
+                </div>
+            )
+        };
+
+        const App = () => {
+            const [user, setUser] = useState(null); 
+            const [tab, setTab] = useState('dashboard');
+            const [mobileOpen, setMobileOpen] = useState(false);
+            const [locations, setLocations] = useState([]);
+            const [inventory, setInventory] = useState([]);
+            const [categories, setCategories] = useState({});
+            const [catalog, setCatalog] = useState([]);
+            const [logs, setLogs] = useState([]);
+            const [staff, setStaff] = useState([
+                { id: 'S-001', name: 'Admin', role: 'Lead' },
+                { id: 'S-002', name: 'Op1', role: 'Live Operator' }
+            ]);
+            const [modal, setModal] = useState({ type: null, data: null });
+
+            const addLog = (a, d, performer = null, items = null) => setLogs(prev => [{id:Date.now(), action:a, details:d, performer: performer || user?.name || 'System', timestamp:new Date().toISOString(), items}, ...prev]);
+            const closeModal = () => setModal({ type: null, data: null });
+
+            // Actions
+            const actions = {
+                onAddStaff: (name, role) => {
+                    setStaff([...staff, { id: generateId('STF'), name, role }]);
+                    addLog('Staff', `Added ${name} as ${role}`);
+                },
+                onDeleteStaff: (id, name) => setModal({type:'delete', data: {type:'staff', id, name}}),
+                onEditStaff: (staffMember) => setModal({type: 'editStaff', data: staffMember}),
+                onAddLocation: (n, t, p, s) => {
+                    let id = '';
+                    if (t === 'floor') {
+                        if (n === 'Ground Floor') id = 'FLOOR-GF';
+                        else if (n === 'Mezzanine') id = 'FLOOR-MZ';
+                        else if (n === 'Roof Deck') id = 'FLOOR-RD';
+                        else if (n.includes('Basement')) {
+                             const num = n.replace(/\D/g, '');
+                             id = `FLOOR-B${num}`;
+                        } else {
+                             const num = parseInt(n);
+                             if (!isNaN(num)) id = `FLOOR-${num}`;
+                             else id = `FLOOR-${Math.floor(Math.random()*1000)}`;
+                        }
+                    } else {
+                        const prefix = {room:'ROOM', storage:'STR', box:'BOX'}[t];
+                        let idPrefix = prefix;
+                        if (t === 'room' && p) {
+                             const floor = locations.find(l => l.id === p);
+                             if (floor) {
+                                 const floorNum = floor.id.split('-')[1];
+                                 if (floorNum) idPrefix = floorNum; 
+                             }
+                        }
+                        const existingNums = locations
+                            .filter(l => l.type === t && l.id.startsWith(idPrefix))
+                            .map(l => parseInt(l.id.split('-').pop()))
+                            .filter(x => !isNaN(x));
+                        const nextNum = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
+                        id = `${idPrefix}-${String(nextNum).padStart(3, '0')}`;
+                    }
+                    if (locations.some(l => l.id === id)) id += `-${Math.floor(Math.random()*100)}`;
+                    setLocations([...locations, { id, name: n, type: t, parentId: p, status: s }]); 
+                    addLog('Create', `Created ${t}: ${n}`); 
+                },
+                onDeleteLocation: (id, name) => setModal({type:'delete', data: {type:'location', id, name}}),
+                onEditLocation: (loc) => setModal({type:'editLocation', data: loc}),
+                onAddCategory: (n) => { 
+                    if(!categories[n]) {
+                        setCategories({...categories, [n]:[]});
+                        addLog('Category', `Added category: ${n}`, user?.name);
+                    }
+                },
+                onDeleteCategory: (n) => setModal({type:'delete', data: {type:'category', name: n}}),
+                onEditCategory: (n) => setModal({type:'editName', data: {type:'category', name: n}}),
+                onAddSubCategory: (p, n) => { 
+                    if(!categories[p].includes(n)) { 
+                        const c={...categories}; 
+                        c[p].push(n); 
+                        setCategories(c);
+                        addLog('Category', `Added sub-category: ${n} to ${p}`, user?.name);
+                    } 
+                },
+                onDeleteSubCategory: (p, n) => setModal({type:'delete', data: {type:'subcategory', name: n, parentId: p}}),
+                onEditSubCategory: (p, n) => setModal({type:'editName', data: {type:'subcategory', name: n, parentId: p}}),
+                onAddProduct: (n, c, s) => { 
+                    setCatalog([...catalog, {id: generateId('PROD'), name: n, category: c, subCategory: s}]); 
+                    addLog('Catalog', `Added product: ${n}`, user?.name);
+                },
+                onDeleteProduct: (id, name) => setModal({type:'delete', data: {type:'product', id, name}}),
+                onEditProduct: (p) => setModal({type:'editProd', data: p}),
+                onAddStock: (p) => setModal({type:'addStock', data: p}),
+                onBackup: () => { const b=new Blob([JSON.stringify({inventory,locations,categories,catalog,logs,staff})], {type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download='backup.json'; a.click(); },
+                onRestore: (file) => { const r=new FileReader(); r.onload=e=>{ try{const d=JSON.parse(e.target.result); setInventory(d.inventory||[]); setLocations(d.locations||[]); setCategories(d.categories||{}); setCatalog(d.catalog||[]); setLogs(d.logs||[]); setStaff(d.staff||[]); alert('Restored!');}catch(err){alert('Error');}}; r.readAsText(file); },
+                onFactoryReset: () => setModal({type:'reset'}),
+                onGenerateReport: (conf) => generatePDF(inventory, locations, catalog, logs, conf),
+                onConfirmAction: (type, title, msg, action) => {
+                     if(type === 'upload') action(); 
+                     else setModal({type: 'confirm', data: {title, msg, action}});
+                }
+            };
+
+            const handleStockSave = (newItems) => { 
+                setInventory([...inventory, ...newItems]); 
+                addLog('Stock', `Added ${newItems.length} units of ${newItems[0].name}`, user?.name, newItems);
+                closeModal(); 
+            };
+            const handleAssignSave = (tid, sel) => {
+                 const newInv = [...inventory];
+                 const storageIds = locations.filter(l=>l.type==='storage').map(l=>l.id);
+                 const assignedItems = [];
+                 Object.entries(sel).forEach(([pid, qty]) => {
+                     const avail = newInv.filter(i=>i.productId===pid && storageIds.includes(i.locationId) && i.status==='Active');
+                     avail.slice(0, qty).forEach(item => {
+                         const idx = newInv.findIndex(x=>x.id===item.id);
+                         if(idx>-1) {
+                             newInv[idx] = {...newInv[idx], locationId: tid};
+                             assignedItems.push(newInv[idx]);
+                         }
+                     });
+                 });
+                 setInventory(newInv); 
+                 addLog('Assign', `Assigned items to ${getLocationName(locations, tid)}`, user?.name, assignedItems);
+                 closeModal();
+            };
+            const handleTransferSave = (sid, tid, sel) => {
+                const transferredItems = inventory.filter(i => sel[i.id]).map(i => tid === 'defect_status' ? {...i, status: 'Defective'} : {...i, locationId: tid});
+                if (tid === 'defect_status') {
+                    setInventory(inventory.map(i => sel[i.id] ? {...i, status: 'Defective'} : i));
+                    addLog('Transfer', `Moved items to Defective status`, user?.name, transferredItems);
+                } else {
+                    setInventory(inventory.map(i => sel[i.id] ? {...i, locationId: tid} : i));
+                    addLog('Transfer', `Transferred items to ${getLocationName(locations, tid)}`, user?.name, transferredItems);
+                }
+                closeModal();
+            };
+            const handleSwapSave = (sid, tid) => {
+                 const srcL = locations.find(l=>l.id===sid); const tgtL = locations.find(l=>l.id===tid);
+                 const itemsInSrc = inventory.filter(i => i.locationId === sid);
+                 const itemsInTgt = inventory.filter(i => i.locationId === tid);
+                 
+                 const newInv = inventory.map(i => {
+                     if(i.locationId===sid) return {...i, locationId:tid};
+                     if(i.locationId===tid) return {...i, locationId:sid};
+                     return i;
+                 });
+                 const newLocs = locations.map(l => {
+                     if(l.id===sid) return {...l, name: tgtL.name, status: tgtL.status};
+                     if(l.id===tid) return {...l, name: srcL.name, status: srcL.status};
+                     return l;
+                 });
+                 setInventory(newInv); setLocations(newLocs); 
+                 addLog('Swap', `Swapped ${srcL.name} with ${tgtL.name}`, user?.name, [...itemsInSrc, ...itemsInTgt]);
+                 closeModal();
+            };
+            
+            const confirmDelete = () => {
+                const { type, id, name, parentId } = modal.data;
+                if(type==='item') setInventory(inventory.filter(i=>i.id!==id));
+                if(type==='location') setLocations(locations.filter(l=>l.id!==id));
+                if(type==='category') {const c={...categories}; delete c[name]; setCategories(c);}
+                if(type==='subcategory') {const c={...categories}; c[parentId]=c[parentId].filter(s=>s!==name); setCategories(c);}
+                if(type==='product') setCatalog(catalog.filter(p=>p.id!==id));
+                if(type==='staff') setStaff(staff.filter(s=>s.id!==id));
+                addLog('Delete', name); closeModal();
+            };
+
+            const confirmEditName = (val) => {
+                 const { type, id, name, parentId } = modal.data;
+                 if(type==='category') {
+                     const c={...categories, [val]: categories[name]}; delete c[name]; setCategories(c);
+                     setCatalog(catalog.map(p=>p.category===name?{...p, category:val}:p));
+                     setInventory(inventory.map(i=>i.category===name?{...i, category:val}:i));
+                 }
+                 if(type==='subcategory') {
+                     const c={...categories}; c[parentId]=c[parentId].map(s=>s===name?val:s); setCategories(c);
+                     setCatalog(catalog.map(p=>p.subCategory===name?{...p, subCategory:val}:p));
+                     setInventory(inventory.map(i=>i.subCategory===name?{...i, subCategory:val}:i));
+                 }
+                 addLog('Edit', `${name} -> ${val}`); closeModal();
+            };
+
+            const confirmEditLocation = (data) => {
+                 setLocations(locations.map(l => l.id === data.id ? { ...l, name: data.name, parentId: data.parentId, status: data.status } : l));
+                 addLog('Edit', `Updated Location: ${data.name}`);
+                 closeModal();
+            };
+
+            const confirmEditProd = (newName) => {
+                 const p = modal.data;
+                 setCatalog(catalog.map(x=>x.id===p.id ? {...x, name:newName} : x));
+                 setInventory(inventory.map(i=>i.productId===p.id ? {...i, name:newName} : i));
+                 addLog('Edit', `Updated product name: ${p.name} -> ${newName}`, user?.name);
+                 closeModal();
+            };
+
+            const confirmEditStaff = (updatedStaff) => {
+                setStaff(staff.map(s => s.id === updatedStaff.id ? updatedStaff : s));
+                addLog('Edit', `Updated staff: ${updatedStaff.name}`);
+                closeModal();
+            };
+
+            const confirmReset = () => {
+                setInventory([]); setLocations([]); setCategories({}); setCatalog([]); setLogs([]);
+                closeModal();
+            };
+
+            if (!user) {
+                return <LoginView staff={staff} onLogin={setUser} />;
+            }
+
+            return (
+                <div className="flex h-screen overflow-hidden">
+                    {mobileOpen && <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={()=>setMobileOpen(false)}></div>}
+                    <div className={`fixed inset-y-0 left-0 w-64 bg-slate-900 text-slate-300 z-50 transform transition-transform lg:relative lg:translate-x-0 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'} shadow-xl flex flex-col`}>
+                        <div className="p-6 border-b border-slate-800 flex justify-between items-center">
+                            <h1 className="text-xl font-bold text-white flex gap-2 items-center"><Icon name="LayoutDashboard" className="text-blue-500"/> Inventory</h1>
+                            <button onClick={()=>setMobileOpen(false)} className="lg:hidden"><Icon name="X" /></button>
+                        </div>
+                        <div className="px-6 py-4 border-b border-slate-800">
+                            <div className="flex items-center gap-3">
+                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-xs ${user?.role==='Lead'?'bg-indigo-500':'bg-emerald-500'}`}>
+                                    {user?.name?.charAt(0)}
+                                </div>
+                                <div>
+                                    <div className="text-sm font-bold text-white">{user?.name}</div>
+                                    <div className="text-xs text-slate-500">{user?.role}</div>
+                                </div>
+                            </div>
+                        </div>
+                        <nav className="p-4 space-y-2 overflow-y-auto h-full pb-20">
+                             <NavBtn icon="LayoutDashboard" label="Dashboard" active={tab==='dashboard'} onClick={()=>setTab('dashboard')} />
+                             <div className="pt-4 pb-2 px-4 text-xs font-bold uppercase text-slate-500">Assets</div>
+                             <NavBtn icon="Building2" label="Floors & Rooms" active={tab==='floors'} onClick={()=>setTab('floors')} />
+                             <NavBtn icon="Warehouse" label="Storage Rooms" active={tab==='storages'} onClick={()=>setTab('storages')} />
+                             <NavBtn icon="Box" label="Portable Boxes" active={tab==='boxes'} onClick={()=>setTab('boxes')} />
+                             <NavBtn icon="AlertOctagon" label="Defects" active={tab==='defects'} onClick={()=>setTab('defects')} color="text-rose-400" />
+                             <div className="pt-4 pb-2 px-4 text-xs font-bold uppercase text-slate-500">Admin</div>
+                             <NavBtn icon="History" label="Activity" active={tab==='activity'} onClick={()=>setTab('activity')} />
+                             <NavBtn icon="Settings" label="Settings" active={tab==='settings'} onClick={()=>setTab('settings')} hidden={user?.role !== 'Lead'} />
+                             <div className="mt-4 pt-4 border-t border-slate-800">
+                                <button onClick={()=>setUser(null)} className="w-full flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-slate-800 text-slate-400 transition-all">
+                                    <Icon name="LogOut" size={20} /> <span className="font-medium">Logout</span>
+                                </button>
+                             </div>
+                        </nav>
+                    </div>
+
+                    <div className="flex-1 flex flex-col min-w-0 bg-slate-50">
+                        <div className="lg:hidden bg-white p-4 border-b flex items-center gap-4">
+                            <button onClick={()=>setMobileOpen(true)}><Icon name="Menu"/></button>
+                            <h2 className="font-bold capitalize">{tab}</h2>
+                        </div>
+                        
+                        <div className="flex-1 overflow-auto p-4 lg:p-8">
+                            {tab==='dashboard' && <DashboardView inventory={inventory} locations={locations} logs={logs} catalog={catalog} onViewLogDetails={(log) => setModal({type:'viewLogDetails', data: log})} />}
+                            {['floors','storages','boxes'].includes(tab) && (
+                                <InventoryView 
+                                    key={tab}
+                                    filterType={tab==='floors'?'structure':tab==='storages'?'storage':'box'}
+                                    title={tab==='floors'?'Floors':tab==='storages'?'Storage':'Boxes'}
+                                    locations={locations} inventory={inventory}
+                                    onOpenAssignModal={(id) => setModal({ type: 'assign', data: { targetId: id } })}
+                                    onOpenTransferModal={(id) => setModal({ type: 'transfer', data: { sourceId: id } })}
+                                    onOpenSwapModal={(id) => setModal({ type: 'swap', data: { sourceId: id } })}
+                                    onDeleteItem={(id, name) => setModal({ type: 'delete', data: { type: 'item', id, name } })}
+                                    onDeleteLocation={(id, name) => setModal({ type: 'delete', data: { type: 'location', id, name } })}
+                                    onUpdateRoomStatus={(id, s) => { setLocations(locations.map(l => l.id === id ? { ...l, status: s } : l)); addLog('Status', `Room ${id} -> ${s}`); }}
+                                    onReportIssue={(item) => { setInventory(inventory.map(i=>i.id===item.id?{...i, status:'Defective'}:i)); addLog('Report', item.name); }}
+                                    onUpdateItemStatus={(id, s) => { setInventory(inventory.map(i=>i.id===id?{...i, status:s}:i)); addLog('Status', `Item ${id} -> ${s}`); }}
+                                />
+                            )}
+                            {tab==='defects' && (
+                                <DefectView inventory={inventory} locations={locations} 
+                                   onUpdateItemStatus={(id, status) => { setInventory(inventory.map(i => i.id === id ? { ...i, status } : i)); addLog('Status', `Item ${id} fixed/active.`); }}
+                                   onDeleteItem={(id, name) => setModal({ type: 'delete', data: { type: 'item', id, name } })}
+                                />
+                            )}
+                            {tab==='activity' && (
+                               <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
+                                   <div className="p-4 border-b border-gray-100 bg-gray-50 font-bold">Activity Log</div>
+                                   <div className="overflow-x-auto">
+                                       <table className="w-full text-sm text-left"><thead className="bg-gray-50 text-gray-500"><tr><th className="p-3">Time</th><th className="p-3">Action</th><th className="p-3">Details</th><th className="p-3">User</th><th className="p-3"></th></tr></thead><tbody className="divide-y">{logs.map(log => (
+                                           <tr key={log.id}>
+                                               <td className="p-3 whitespace-nowrap text-gray-500">{formatTimestamp(log.timestamp)}</td>
+                                               <td className="p-3 font-semibold text-blue-600">{log.action}</td>
+                                               <td className="p-3">{log.details}</td>
+                                               <td className="p-3 text-xs text-slate-500">{log.performer}</td>
+                                               <td className="p-3 text-right">
+                                                   {log.items && log.items.length > 0 && <button onClick={()=>setModal({type:'viewLogDetails', data: log})} className="text-xs bg-slate-100 text-blue-600 px-2 py-1 rounded hover:bg-slate-200">View Items</button>}
+                                               </td>
+                                           </tr>
+                                       ))}</tbody></table>
+                                   </div>
+                               </div>
+                            )}
+                            {tab==='settings' && <SettingsView locations={locations} inventory={inventory} categories={categories} catalog={catalog} logs={logs} actions={actions} staff={staff} />}
+                        </div>
+                    </div>
+
+                    {modal.type && (
+                        <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4 backdrop-blur-sm modal-backdrop">
+                            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden modal-content flex flex-col">
+                                {modal.type === 'delete' && (
+                                    <div className="p-6 text-center">
+                                        <div className="mx-auto w-12 h-12 bg-red-100 rounded-full flex items-center justify-center text-red-600 mb-4"><Icon name="AlertTriangle" size={24}/></div>
+                                        <h3 className="text-lg font-bold text-slate-800 mb-2">Confirm Deletion</h3>
+                                        <p className="text-slate-500 mb-6">Are you sure you want to delete <strong>{modal.data.name}</strong>? This cannot be undone.</p>
+                                        <div className="flex gap-3">
+                                            <button onClick={closeModal} className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 font-medium">Cancel</button>
+                                            <button onClick={confirmDelete} className="flex-1 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium shadow-lg shadow-red-200">Delete</button>
+                                        </div>
+                                    </div>
+                                )}
+                                {modal.type === 'reset' && (
+                                    <div className="p-6 text-center">
+                                        <div className="mx-auto w-12 h-12 bg-red-100 rounded-full flex items-center justify-center text-red-600 mb-4"><Icon name="RotateCcw" size={24}/></div>
+                                        <h3 className="text-lg font-bold text-slate-800 mb-2">Factory Reset</h3>
+                                        <p className="text-slate-500 mb-6">This will wipe ALL data. Are you sure?</p>
+                                        <div className="flex gap-3">
+                                            <button onClick={closeModal} className="flex-1 py-2.5 border border-slate-200 rounded-lg">Cancel</button>
+                                            <button onClick={confirmReset} className="flex-1 py-2.5 bg-red-600 text-white rounded-lg">Reset All</button>
+                                        </div>
+                                    </div>
+                                )}
+                                {modal.type === 'editName' && (
+                                    <div className="p-6">
+                                        <h3 className="font-bold mb-4 text-lg">Edit Name</h3>
+                                        <input id="editVal" defaultValue={modal.data.name} className="w-full border p-2 rounded mb-4" />
+                                        <div className="flex gap-2 justify-end">
+                                            <button onClick={closeModal} className="px-4 py-2 border rounded">Cancel</button>
+                                            <button onClick={()=>confirmEditName(document.getElementById('editVal').value)} className="px-4 py-2 bg-blue-600 text-white rounded">Save</button>
+                                        </div>
+                                    </div>
+                                )}
+                                {modal.type === 'editStaff' && (
+                                    <div className="p-6">
+                                        <h3 className="font-bold mb-4 text-lg">Edit Staff</h3>
+                                        <div className="space-y-4">
+                                            <div>
+                                                <label className="text-xs font-bold text-slate-500 uppercase">Nickname</label>
+                                                <input id="editStaffName" defaultValue={modal.data.name} className="w-full border p-2 rounded text-sm"/>
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-slate-500 uppercase">Role</label>
+                                                <select id="editStaffRole" defaultValue={modal.data.role} className="w-full border p-2 rounded text-sm bg-white">
+                                                    <option value="Lead">Lead (Admin)</option>
+                                                    <option value="Live Operator">Live Operator</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-2 justify-end mt-6">
+                                            <button onClick={closeModal} className="px-4 py-2 border rounded">Cancel</button>
+                                            <button onClick={()=>confirmEditStaff({id: modal.data.id, name: document.getElementById('editStaffName').value, role: document.getElementById('editStaffRole').value})} className="px-4 py-2 bg-blue-600 text-white rounded">Save</button>
+                                        </div>
+                                    </div>
+                                )}
+                                {modal.type === 'editLocation' && <EditLocationContent data={modal.data} locations={locations} onSave={confirmEditLocation} onClose={closeModal} />}
+                                {modal.type === 'editProd' && (
+                                    <div className="p-6">
+                                        <h3 className="font-bold mb-4 text-lg">Edit Product</h3>
+                                        <input id="editVal" defaultValue={modal.data.name} className="w-full border p-2 rounded mb-4" />
+                                        <div className="flex gap-2 justify-end">
+                                            <button onClick={closeModal} className="px-4 py-2 border rounded">Cancel</button>
+                                            <button onClick={()=>confirmEditProd(document.getElementById('editVal').value)} className="px-4 py-2 bg-blue-600 text-white rounded">Save</button>
+                                        </div>
+                                    </div>
+                                )}
+                                {modal.type === 'addStock' && (
+                                    <div className="p-6 space-y-4">
+                                        <h3 className="font-bold mb-4">Add Stock: {modal.data.name}</h3>
+                                        <input id="stQty" type="number" className="border w-full p-2 rounded mb-2" placeholder="Qty" defaultValue="1" />
+                                        <select id="stLoc" className="border w-full p-2 rounded mb-4"><option value="">Select Storage</option>{locations.filter(l=>l.type==='storage').map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
+                                        <div className="flex gap-2"><button onClick={closeModal} className="flex-1 border py-2 rounded">Cancel</button><button onClick={()=>{
+                                            const q = parseInt(document.getElementById('stQty').value);
+                                            const l = document.getElementById('stLoc').value;
+                                            if(l && q>0) {
+                                                const newItems = [];
+                                                const existing = inventory.map(i=>i.id);
+                                                for(let i=0; i<q; i++) {
+                                                    newItems.push({
+                                                        id: generateItemUniqueId(modal.data.name, existing.concat(newItems.map(x=>x.id))),
+                                                        productId: modal.data.id, name: modal.data.name, category: modal.data.category, subCategory: modal.data.subCategory, locationId: l, status: 'Active'
+                                                    });
+                                                }
+                                                handleStockSave(newItems);
+                                            }
+                                        }} className="flex-1 bg-green-600 text-white py-2 rounded">Confirm</button></div>
+                                    </div>
+                                )}
+                                {modal.type === 'assign' && (
+                                    <AssignItemsContent 
+                                        catalog={catalog} 
+                                        inventory={inventory} 
+                                        locations={locations} 
+                                        targetId={modal.data.targetId} 
+                                        onSave={handleAssignSave}
+                                        onClose={closeModal}
+                                        staff={staff}
+                                    />
+                                )}
+                                {modal.type === 'transfer' && (
+                                    <TransferItemsContent
+                                        inventory={inventory}
+                                        locations={locations}
+                                        sourceId={modal.data.sourceId}
+                                        onTransfer={handleTransferSave}
+                                        onClose={closeModal}
+                                        staff={staff}
+                                    />
+                                )}
+                                {modal.type === 'swap' && (
+                                    <SwapContent
+                                        locations={locations}
+                                        staff={staff}
+                                        sourceId={modal.data.sourceId}
+                                        onSwap={handleSwapSave}
+                                        onClose={closeModal}
+                                    />
+                                )}
+                                {modal.type === 'viewLogDetails' && <LogDetailsContent log={modal.data} onClose={closeModal} />}
+                                {modal.type === 'confirm' && (
+                                    <div className="p-6 text-center">
+                                        <h3 className="text-lg font-bold mb-2">{modal.data.title}</h3>
+                                        <p className="text-gray-500 mb-6">{modal.data.msg}</p>
+                                        <div className="flex gap-3">
+                                            <button onClick={closeModal} className="flex-1 py-2 border rounded">Cancel</button>
+                                            <button onClick={()=>{modal.data.action(); closeModal()}} className="flex-1 py-2 bg-blue-600 text-white rounded">Confirm</button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
