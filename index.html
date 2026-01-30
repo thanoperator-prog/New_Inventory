@@ -52,6 +52,9 @@
             getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
             getFirestore, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit, writeBatch
         };
+
+        // Notify that Firebase is ready
+        window.dispatchEvent(new Event('firebase-ready'));
     </script>
 
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -99,10 +102,27 @@
         @media (max-width: 768px) {
             .mobile-full-height { height: calc(100dvh - 60px); }
         }
+
+        /* Loading Spinner */
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 3px solid #3b82f6;
+            width: 24px;
+            height: 24px;
+            -webkit-animation: spin 1s linear infinite; /* Safari */
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body class="text-slate-800 safe-pt safe-pb">
-    <div id="root"></div>
+    <div id="root">
+        <div class="h-full flex flex-col items-center justify-center space-y-4">
+            <div class="loader"></div>
+            <div class="text-slate-400 text-sm font-medium">Initializing System...</div>
+        </div>
+    </div>
     <div id="report-wrapper"><div id="report-content"></div></div>
 
     <script>
@@ -117,25 +137,11 @@
     </script>
 
     <script type="text/babel">
-        const { useState, useMemo, useEffect, useRef } = React;
+        // Global variables for Firebase services to be accessible by components
+        let db, auth, appId;
         
-        // --- FIREBASE INITIALIZATION ---
-        // Wait for modules to be loaded
-        if (!window.firebaseModules) {
-            console.error("Firebase modules not loaded yet!");
-        }
-
-        const { 
-            initializeApp, 
-            getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
-            getFirestore, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit, writeBatch
-        } = window.firebaseModules;
-
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        // Destructure React hooks globally
+        const { useState, useMemo, useEffect, useRef } = React;
 
         // --- 1. ICONS ---
         const ICONS = {
@@ -1637,16 +1643,25 @@
             // Authentication & Listeners
             useEffect(() => {
                 const initAuth = async () => {
+                    const { signInWithCustomToken, signInAnonymously } = window.firebaseModules;
                     if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                        await signInWithCustomToken(auth, __initial_auth_token);
+                        try {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } catch (e) {
+                            console.warn("Custom token failed, falling back to anonymous", e);
+                            await signInAnonymously(auth);
+                        }
                     } else {
                         await signInAnonymously(auth);
                     }
                 };
                 initAuth();
 
+                const { onAuthStateChanged } = window.firebaseModules;
                 const unsubscribeAuth = onAuthStateChanged(auth, (authUser) => {
                     if (!authUser) return;
+
+                    const { collection, onSnapshot, query, orderBy, limit, doc, setDoc } = window.firebaseModules;
 
                     const qLocs = collection(db, 'artifacts', appId, 'public', 'data', 'locations');
                     const unsubLocs = onSnapshot(qLocs, (s) => setLocations(s.docs.map(d => d.data())));
@@ -1688,6 +1703,7 @@
             }, []);
 
             const addLog = async (a, d, performer = null, items = null) => {
+                const { addDoc, collection } = window.firebaseModules;
                 const newLog = {id: Date.now(), action:a, details:d, performer: performer || user?.name || 'System', timestamp:new Date().toISOString(), items};
                 await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'logs'), newLog);
             };
@@ -1696,6 +1712,7 @@
             // Actions - Modified for Firebase
             const actions = {
                 onAddStaff: async (name, role) => {
+                    const { setDoc, doc } = window.firebaseModules;
                     const id = generateId('STF');
                     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'staff', id), { id, name, role });
                     addLog('Staff', `Added ${name} as ${role}`);
@@ -1703,6 +1720,7 @@
                 onDeleteStaff: async (id, name) => setModal({type:'delete', data: {type:'staff', id, name}}),
                 onEditStaff: (staffMember) => setModal({type: 'editStaff', data: staffMember}),
                 onAddLocation: async (n, t, p, s) => {
+                    const { setDoc, doc } = window.firebaseModules;
                     let id = '';
                     if (t === 'floor') {
                         if (n === 'Ground Floor') id = 'FLOOR-GF';
@@ -1741,6 +1759,7 @@
                 onDeleteLocation: (id, name) => setModal({type:'delete', data: {type:'location', id, name}}),
                 onEditLocation: (loc) => setModal({type:'editLocation', data: loc}),
                 onAddCategory: async (n) => { 
+                    const { setDoc, doc } = window.firebaseModules;
                     if(!categories[n]) {
                         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'categories', n), { subCategories: [] });
                         addLog('Category', `Added category: ${n}`, user?.name);
@@ -1749,6 +1768,7 @@
                 onDeleteCategory: (n) => setModal({type:'delete', data: {type:'category', name: n}}),
                 onEditCategory: (n) => setModal({type:'editName', data: {type:'category', name: n}}),
                 onAddSubCategory: async (p, n) => { 
+                    const { updateDoc, doc } = window.firebaseModules;
                     if(!categories[p].includes(n)) { 
                         const newSubs = [...categories[p], n];
                         await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'categories', p), { subCategories: newSubs });
@@ -1758,6 +1778,7 @@
                 onDeleteSubCategory: (p, n) => setModal({type:'delete', data: {type:'subcategory', name: n, parentId: p}}),
                 onEditSubCategory: (p, n) => setModal({type:'editName', data: {type:'subcategory', name: n, parentId: p}}),
                 onAddProduct: async (n, c, s) => { 
+                    const { setDoc, doc } = window.firebaseModules;
                     const id = generateId('PROD');
                     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'catalog', id), {id, name: n, category: c, subCategory: s});
                     addLog('Catalog', `Added product: ${n}`, user?.name);
@@ -1776,6 +1797,7 @@
             };
 
             const handleStockSave = async (newItems) => { 
+                const { writeBatch, doc } = window.firebaseModules;
                 const batch = writeBatch(db);
                 newItems.forEach(item => {
                     const ref = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', item.id);
@@ -1786,6 +1808,7 @@
                 closeModal(); 
             };
             const handleAssignSave = async (tid, sel) => {
+                 const { writeBatch, doc } = window.firebaseModules;
                  // Logic to pick available items from storage is tricky with async, but state is synced.
                  // We will iterate local inventory to find IDs, then update them in DB.
                  const newInv = [...inventory];
@@ -1812,6 +1835,7 @@
                  closeModal();
             };
             const handleTransferSave = async (sid, tid, sel) => {
+                const { writeBatch, doc } = window.firebaseModules;
                 const transferredItems = inventory.filter(i => sel[i.id]).map(i => tid === 'defect_status' ? {...i, status: 'Defective'} : {...i, locationId: tid});
                 
                 const batch = writeBatch(db);
@@ -1830,6 +1854,7 @@
                 closeModal();
             };
             const handleSwapSave = async (sid, tid) => {
+                 const { writeBatch, doc } = window.firebaseModules;
                  const srcL = locations.find(l=>l.id===sid); 
                  const tgtL = locations.find(l=>l.id===tid);
                  
@@ -1863,6 +1888,7 @@
             };
             
             const confirmDelete = async () => {
+                const { deleteDoc, doc, updateDoc } = window.firebaseModules;
                 const { type, id, name, parentId } = modal.data;
                 
                 if(type==='item') await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', id));
@@ -1880,6 +1906,7 @@
             };
 
             const confirmEditName = async (val) => {
+                 const { setDoc, deleteDoc, updateDoc, doc } = window.firebaseModules;
                  const { type, id, name, parentId } = modal.data;
                  if(type==='category') {
                      // Copy to new doc, delete old
@@ -1897,12 +1924,14 @@
             };
 
             const confirmEditLocation = async (data) => {
+                 const { updateDoc, doc } = window.firebaseModules;
                  await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'locations', data.id), { name: data.name, parentId: data.parentId, status: data.status });
                  addLog('Edit', `Updated Location: ${data.name}`);
                  closeModal();
             };
 
             const confirmEditProd = async (newName) => {
+                 const { updateDoc, doc } = window.firebaseModules;
                  const p = modal.data;
                  await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'catalog', p.id), { name: newName });
                  // Update active inventory names too? simplified:
@@ -1911,12 +1940,14 @@
             };
 
             const confirmEditStaff = async (updatedStaff) => {
+                const { updateDoc, doc } = window.firebaseModules;
                 await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'staff', updatedStaff.id), updatedStaff);
                 addLog('Edit', `Updated staff: ${updatedStaff.name}`);
                 closeModal();
             };
 
             const confirmReset = async () => {
+                const { writeBatch, doc } = window.firebaseModules;
                 // Warning: This deletes everything!
                 const batch = writeBatch(db);
                 // Since we can't easily delete collections, we'd need to fetch all and delete. 
@@ -1991,14 +2022,17 @@
                                     onDeleteItem={(id, name) => setModal({ type: 'delete', data: { type: 'item', id, name } })}
                                     onDeleteLocation={(id, name) => setModal({ type: 'delete', data: { type: 'location', id, name } })}
                                     onUpdateRoomStatus={async (id, s) => { 
+                                        const { updateDoc, doc } = window.firebaseModules;
                                         await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'locations', id), { status: s });
                                         addLog('Status', `Room ${id} -> ${s}`); 
                                     }}
                                     onReportIssue={async (item) => { 
+                                        const { updateDoc, doc } = window.firebaseModules;
                                         await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', item.id), { status: 'Defective' });
                                         addLog('Report', item.name); 
                                     }}
                                     onUpdateItemStatus={async (id, s) => { 
+                                        const { updateDoc, doc } = window.firebaseModules;
                                         await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', id), { status: s });
                                         addLog('Status', `Item ${id} -> ${s}`); 
                                     }}
@@ -2007,6 +2041,7 @@
                             {tab==='defects' && (
                                 <DefectView inventory={inventory} locations={locations} 
                                    onUpdateItemStatus={async (id, status) => { 
+                                       const { updateDoc, doc } = window.firebaseModules;
                                        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', id), { status });
                                        addLog('Status', `Item ${id} fixed/active.`); 
                                    }}
@@ -2173,8 +2208,41 @@
             );
         };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        // --- INIT FUNCTION ---
+        function initInventoryApp() {
+            // --- FIREBASE INITIALIZATION ---
+            if (!window.firebaseModules) {
+                console.error("Firebase modules missing despite ready event.");
+                return;
+            }
+
+            const { initializeApp, getAuth, getFirestore } = window.firebaseModules;
+
+            const firebaseConfig = {
+                apiKey: "AIzaSyBUVnTBzxA2-E7U-rmit46H7txqO9nP_1E",
+                authDomain: "inventory-app-24c97.firebaseapp.com",
+                projectId: "inventory-app-24c97",
+                storageBucket: "inventory-app-24c97.firebasestorage.app",
+                messagingSenderId: "410420603875",
+                appId: "1:410420603875:web:e93c85e32d9bad8a66ced6",
+                measurementId: "G-7LW6QN7DR2"
+            };
+
+            const app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+            appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            root.render(<App />);
+        }
+
+        // Initialize immediately if modules are already loaded, otherwise wait for event
+        if (window.firebaseModules) {
+            initInventoryApp();
+        } else {
+            window.addEventListener('firebase-ready', initInventoryApp);
+        }
     </script>
 </body>
 </html>
