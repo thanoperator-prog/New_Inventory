@@ -44,13 +44,13 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit, writeBatch, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Expose modules to global scope for Babel script
         window.firebaseModules = {
             initializeApp,
             getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
-            getFirestore, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit, writeBatch
+            getFirestore, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit, writeBatch, where, getDocs
         };
 
         // Notify that Firebase is ready
@@ -143,7 +143,7 @@
 
         // --- 1. ICONS ---
         const ICONS = {
-            PieChart: <g><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></g>, // Added for Incomplete status
+            PieChart: <g><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></g>,
             EyeOff: <g><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></g>,
             LayoutDashboard: <g><rect width="7" height="9" x="3" y="3" rx="1" /><rect width="7" height="5" x="14" y="3" rx="1" /><rect width="7" height="9" x="14" y="12" rx="1" /><rect width="7" height="5" x="3" y="16" rx="1" /></g>,
             Building2: <g><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></g>,
@@ -259,6 +259,16 @@
 
         const getLocationName = (locations, id) => locations.find(l => l.id === id)?.name || id;
 
+        // --- GLOBAL HELPER: ITEM STATUS BADGE ---
+        const getItemStatusBadge = (s) => {
+            let color = 'bg-green-50 text-green-600 border-green-200';
+            if (s === 'Defect' || s === 'Defective') color = 'bg-red-50 text-red-600 border-red-200';
+            if (s === 'Missing') color = 'bg-orange-50 text-orange-600 border-orange-200';
+            if (s === 'Incomplete') color = 'bg-yellow-50 text-yellow-600 border-yellow-200';
+            if (s === 'Pullout') color = 'bg-slate-800 text-white border-slate-900';
+            return <span className={`text-[10px] px-1.5 py-0.5 rounded border font-bold uppercase ${color}`}>{s || 'Working'}</span>;
+        };
+
         // --- 4. PDF GENERATOR ---
         const generatePDF = (inventory, locations, catalog, logs, config) => {
             const element = document.getElementById('report-content');
@@ -293,6 +303,12 @@
             const occupied = rooms.filter(l => l.status === 'Occupied').length;
             const vacant = rooms.filter(l => l.status === 'Vacant' || !l.status).length;
             const maintenance = rooms.filter(l => l.status === 'Maintenance').length;
+
+            // Count Issues
+            const defectItems = reportInventory.filter(i => ['Defective', 'Defect', 'Pullout'].includes(i.status));
+            const missingItems = reportInventory.filter(i => i.status === 'Missing');
+            const incompleteItems = reportInventory.filter(i => i.status === 'Incomplete');
+            const totalIssues = defectItems.length + missingItems.length + incompleteItems.length;
             
             let html = `
                 <div style="font-family: 'Helvetica', sans-serif; padding: 40px; color: #334155; font-size: 12px; line-height: 1.5; background: white;">
@@ -315,8 +331,8 @@
                             <div style="font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: bold;">Total Assets</div>
                         </div>
                          <div style="flex:1; background: #fff1f2; padding: 10px; border-left: 4px solid #ef4444;">
-                            <div style="font-size: 20px; font-weight: bold; color: #b91c1c;">${reportInventory.filter(i => i.status === 'Defective').length}</div>
-                            <div style="font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: bold;">Defects</div>
+                            <div style="font-size: 20px; font-weight: bold; color: #b91c1c;">${totalIssues}</div>
+                            <div style="font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: bold;">Total Issues</div>
                         </div>
                     </div>
                     
@@ -444,10 +460,8 @@
                 };
 
                 // 1. Structure by Floor
-                // Only process floors that are in the reportLocations list
                 const floors = reportLocations.filter(l => l.type === 'floor');
                 floors.forEach(floor => {
-                    // Only find children that are ALSO in reportLocations
                     const childRooms = reportLocations.filter(l => l.parentId === floor.id);
                     
                     html += `<div style="margin-bottom: 20px;">`;
@@ -458,33 +472,32 @@
                     }
 
                     childRooms.forEach(room => {
-                        const items = reportInventory.filter(i => i.locationId === room.id && i.status === 'Active');
+                        // Filter for only Active/Working items for location breakdown
+                        const items = reportInventory.filter(i => i.locationId === room.id && (!i.status || i.status === 'Active' || i.status === 'Working'));
                         html += renderLocationBlock(room, items);
                     });
                     html += `</div>`;
                 });
 
-                // 2. Storage & Boxes (Non-floor locations)
+                // 2. Storage & Boxes
                 const otherLocs = reportLocations.filter(l => (l.type === 'storage' || l.type === 'box'));
                 if(otherLocs.length > 0) {
                      html += `<div style="margin-top: 20px; page-break-before: avoid;">`;
                      html += `<h3 style="background: #475569; color: white; padding: 6px 10px; margin: 0 0 10px 0; font-size: 12px; border-radius: 4px;">Storage & Boxes</h3>`;
                      otherLocs.forEach(loc => {
-                        const items = reportInventory.filter(i => i.locationId === loc.id);
+                        const items = reportInventory.filter(i => i.locationId === loc.id && (!i.status || i.status === 'Active' || i.status === 'Working'));
                         html += renderLocationBlock(loc, items);
                      });
                      html += `</div>`;
                 }
                 
-                // 3. Orphan Rooms (Rooms selected explicitly without their floor being selected/present in the list if simplified logic was used, though our logic includes parent floors often. 
-                // But if the user selects a specific room, filter logic above might isolate it. 
-                // If the filter selected a ROOM, floors array will be empty.
+                // 3. Orphan Rooms
                 const orphanRooms = reportLocations.filter(l => l.type === 'room' && !reportLocations.find(p => p.id === l.parentId));
                 if (orphanRooms.length > 0) {
                      html += `<div style="margin-top: 20px; page-break-before: avoid;">`;
                      html += `<h3 style="background: #475569; color: white; padding: 6px 10px; margin: 0 0 10px 0; font-size: 12px; border-radius: 4px;">Specific Rooms</h3>`;
                      orphanRooms.forEach(loc => {
-                        const items = reportInventory.filter(i => i.locationId === loc.id && i.status === 'Active');
+                        const items = reportInventory.filter(i => i.locationId === loc.id && (!i.status || i.status === 'Active' || i.status === 'Working'));
                         html += renderLocationBlock(loc, items);
                      });
                      html += `</div>`;
@@ -492,15 +505,59 @@
             }
 
             if (config.defects) {
-                const defects = reportInventory.filter(i => i.status === 'Defective' || i.status === 'Pullout');
-                if(defects.length > 0) {
-                    html += `<div style="page-break-before: always; page-break-inside: avoid;"><h2 style="font-size: 16px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; margin-bottom: 15px; color: #b91c1c; font-weight: bold; text-transform: uppercase;">Defective Items Report</h2>`;
-                    html += `<table style="width: 100%; border-collapse: collapse; font-size: 10px;"><thead><tr style="background: #fee2e2;"><th style="padding:6px; border:1px solid #fca5a5; text-align: left;">ID</th><th style="padding:6px; border:1px solid #fca5a5; text-align: left;">Name</th><th style="padding:6px; border:1px solid #fca5a5; text-align: left;">Location</th><th style="padding:6px; border:1px solid #fca5a5; text-align: left;">Status</th></tr></thead><tbody>`;
-                    defects.forEach(i => {
-                        html += `<tr><td style="padding:6px; border:1px solid #e2e8f0; font-family: monospace;">${i.id}</td><td style="padding:6px; border:1px solid #e2e8f0;">${i.name}</td><td style="padding:6px; border:1px solid #e2e8f0;">${getLocationName(locations, i.locationId)}</td><td style="padding:6px; border:1px solid #e2e8f0; color: #b91c1c; font-weight: bold;">${i.status}</td></tr>`;
-                    });
-                    html += `</tbody></table></div>`;
-                }
+                // Collect all issue items logic helper
+                const renderIssueSection = (title, items, color, bgInfo) => {
+                     if(items.length === 0) return '';
+                     
+                     let sectionHtml = `<div style="page-break-before: always; page-break-inside: avoid;">`;
+                     sectionHtml += `<h2 style="font-size: 16px; border-bottom: 2px solid ${color}; padding-bottom: 5px; margin-bottom: 15px; color: ${color}; font-weight: bold; text-transform: uppercase;">${title}</h2>`;
+                     
+                     const groupedIssues = {};
+                     items.forEach(item => {
+                        const cat = item.category || 'Uncategorized';
+                        const sub = item.subCategory || 'General';
+                        const name = item.name;
+                        if (!groupedIssues[cat]) groupedIssues[cat] = {};
+                        if (!groupedIssues[cat][sub]) groupedIssues[cat][sub] = {};
+                        if (!groupedIssues[cat][sub][name]) groupedIssues[cat][sub][name] = [];
+                        groupedIssues[cat][sub][name].push(item);
+                     });
+                     
+                     Object.keys(groupedIssues).sort().forEach(cat => {
+                        sectionHtml += `<div style="margin-bottom: 15px; page-break-inside: avoid;">`;
+                        sectionHtml += `<div style="background: ${bgInfo.bg}; color: ${bgInfo.text}; padding: 6px 10px; font-weight: bold; font-size: 12px; border-radius: 4px 4px 0 0; border: 1px solid ${bgInfo.border};">${cat}</div>`;
+                        sectionHtml += `<div style="border: 1px solid ${bgInfo.border}; border-top: none; padding: 10px; background: white;">`;
+                        
+                        Object.keys(groupedIssues[cat]).sort().forEach(sub => {
+                            sectionHtml += `<div style="margin-bottom: 10px;">`;
+                            sectionHtml += `<div style="font-size: 11px; font-weight: 700; color: ${color}; margin-bottom: 4px; text-transform: uppercase; border-bottom: 1px dashed ${bgInfo.border};">${sub}</div>`;
+                            
+                            Object.keys(groupedIssues[cat][sub]).sort().forEach(prodName => {
+                                const prodItems = groupedIssues[cat][sub][prodName];
+                                sectionHtml += `<div style="margin-left: 10px; margin-bottom: 5px;">`;
+                                sectionHtml += `<div style="font-size: 10px; font-weight: bold; color: #334155;">${prodName} <span style="color:#64748b; font-weight:normal;">(${prodItems.length})</span></div>`;
+                                sectionHtml += `<table style="width: 100%; border-collapse: collapse; font-size: 9px; margin-top: 2px;">`;
+                                prodItems.forEach(item => {
+                                    sectionHtml += `<tr>
+                                        <td style="padding:2px 5px; border-bottom:1px solid #f1f5f9; width: 30%; color: #64748b; font-family: monospace;">${item.id}</td>
+                                        <td style="padding:2px 5px; border-bottom:1px solid #f1f5f9; width: 40%;">Last Loc: ${getLocationName(locations, item.locationId)}</td>
+                                        <td style="padding:2px 5px; border-bottom:1px solid #f1f5f9; width: 30%; text-align: right; font-weight: bold; color: ${color}; text-transform: uppercase;">${item.status}</td>
+                                    </tr>`;
+                                });
+                                sectionHtml += `</table></div>`;
+                            });
+                            sectionHtml += `</div>`;
+                        });
+                        sectionHtml += `</div></div>`;
+                     });
+                     
+                     sectionHtml += `</div>`;
+                     return sectionHtml;
+                };
+
+                html += renderIssueSection("Defective Items Report", defectItems, "#b91c1c", {bg: "#fee2e2", text: "#b91c1c", border: "#fca5a5"});
+                html += renderIssueSection("Missing Items Report", missingItems, "#c2410c", {bg: "#ffedd5", text: "#c2410c", border: "#fdba74"});
+                html += renderIssueSection("Incomplete Items Report", incompleteItems, "#a16207", {bg: "#fef9c3", text: "#a16207", border: "#fde047"});
             }
 
             if (config.activity) {
@@ -661,8 +718,6 @@
             const occupancy = rooms.length ? Math.round((occupied/rooms.length)*100) : 0;
             const storageIds = locations.filter(l=>l.type==='storage').map(l=>l.id);
             const inStorage = inventory.filter(i=>storageIds.includes(i.locationId) && i.status === 'Active').length;
-            
-            // Updated Stats Calculation
             const defects = inventory.filter(i=>i.status==='Defective' || i.status==='Defect' || i.status==='Pullout').length;
             const missing = inventory.filter(i=>i.status==='Missing').length;
             const incomplete = inventory.filter(i=>i.status==='Incomplete').length;
@@ -720,7 +775,7 @@
             const selectedLocation = useMemo(() => locations.find(l => l.id === selectedId), [locations, selectedId]);
 
             let relevantLocations = filterType === 'structure' ? locations.filter(l => l.type === 'floor') : locations.filter(l => l.type === filterType);
-            const getItemsInLocation = (locId) => inventory.filter(i => i.locationId === locId);
+            const getItemsInLocation = (locId) => inventory.filter(i => i.locationId === locId && (!i.status || i.status === 'Active' || i.status === 'Working'));
             const getLocationItemCount = (locId) => getItemsInLocation(locId).length;
 
             const getDeepGroupedItems = (locId) => {
@@ -739,15 +794,6 @@
 
             const toggleFloor = id => setOpenFloors(p => ({...p, [id]: !p[id]}));
             const toggleGroup = key => setExpandedGroups(p => ({...p, [key]: !p[key]}));
-            
-            const getItemStatusBadge = (s) => {
-                let color = 'bg-green-50 text-green-600 border-green-200';
-                if (s === 'Defect' || s === 'Defective') color = 'bg-red-50 text-red-600 border-red-200';
-                if (s === 'Missing') color = 'bg-orange-50 text-orange-600 border-orange-200';
-                if (s === 'Incomplete') color = 'bg-yellow-50 text-yellow-600 border-yellow-200';
-                if (s === 'Pullout') color = 'bg-slate-800 text-white border-slate-900';
-                return <span className={`text-[10px] px-1.5 py-0.5 rounded border font-bold uppercase ${color}`}>{s || 'Working'}</span>;
-            };
 
             const getStatusColor = (status) => status === 'Occupied' ? 'bg-red-100 text-red-700 border-red-200' : status === 'Maintenance' ? 'bg-yellow-100 text-yellow-700 border-yellow-200' : 'bg-green-100 text-green-700 border-green-200';
 
@@ -884,7 +930,7 @@
             );
         };
 
-        const DefectView = ({ inventory, locations, onUpdateItemStatus, onDeleteItem }) => {
+        const DefectView = ({ inventory, locations, onUpdateItemStatus, onDeleteItem, onResolve }) => {
             const [currentTab, setCurrentTab] = useState('defective'); // defective, missing, incomplete
 
             const defects = inventory.filter(i => i.status === 'Defective' || i.status === 'Defect' || i.status === 'Pullout');
@@ -909,11 +955,11 @@
                                                 <div key={item.id} className={`flex justify-between items-center p-3 border rounded-lg bg-white ${colorClass.replace('text-', 'border-').replace('600', '100')}`}>
                                                     <div>
                                                         <div className="font-bold text-slate-800">{item.name}</div>
-                                                        <div className="text-xs text-gray-500">ID: {item.id} • Loc: {getLocationName(locations, item.locationId)}</div>
+                                                        <div className="text-xs text-gray-500">ID: {item.id} • Last Loc: {getLocationName(locations, item.locationId)}</div>
                                                     </div>
                                                     <div className="flex items-center gap-2">
                                                         <span className={`text-[10px] font-bold uppercase bg-white px-2 py-1 rounded border ${colorClass.replace('text-', 'text-').replace('600', '700')} border-gray-200`}>{item.status}</span>
-                                                        <button onClick={()=>onUpdateItemStatus(item.id, 'Working')} className="text-xs bg-green-600 text-white px-3 py-1.5 rounded flex gap-1 items-center hover:bg-green-700 transition"><Icon name="CheckCircle2" size={14}/> Resolve</button>
+                                                        <button onClick={()=>onResolve(item)} className="text-xs bg-green-600 text-white px-3 py-1.5 rounded flex gap-1 items-center hover:bg-green-700 transition"><Icon name="CheckCircle2" size={14}/> Resolve</button>
                                                         <button onClick={()=>onDeleteItem(item.id, item.name)} className="text-gray-400 hover:text-red-500 p-1"><Icon name="Trash2" size={16}/></button>
                                                     </div>
                                                 </div>
@@ -1546,17 +1592,20 @@
                                                                         <div className="text-xs font-semibold text-slate-600 mb-1 ml-1">{prodName}</div>
                                                                         <div className="space-y-1">
                                                                             {items.map(item => (
-                                                                                <label key={item.id} className="flex items-center gap-3 p-2 border border-slate-100 rounded hover:bg-blue-50 hover:border-blue-100 cursor-pointer transition-colors bg-white">
-                                                                                    <input 
-                                                                                        type="checkbox" 
-                                                                                        className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 border-gray-300"
-                                                                                        checked={!!selectedItems[item.id]}
-                                                                                        onChange={(e) => handleCheckbox(item.id, e.target.checked)}
-                                                                                    />
-                                                                                    <div className="flex flex-col">
-                                                                                        <span className="text-xs font-mono text-slate-500 bg-slate-100 px-1 rounded w-fit">{item.id}</span>
+                                                                                <label key={item.id} className="flex items-center justify-between p-2 border border-slate-100 rounded hover:bg-blue-50 hover:border-blue-100 cursor-pointer transition-colors bg-white">
+                                                                                    <div className="flex items-center gap-3">
+                                                                                        <input 
+                                                                                            type="checkbox" 
+                                                                                            className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 border-gray-300"
+                                                                                            checked={!!selectedItems[item.id]}
+                                                                                            onChange={(e) => handleCheckbox(item.id, e.target.checked)}
+                                                                                        />
+                                                                                        <div className="flex flex-col">
+                                                                                            <span className="text-xs font-mono text-slate-500 bg-slate-100 px-1 rounded w-fit">{item.id}</span>
+                                                                                        </div>
+                                                                                        <span className="text-sm font-medium text-slate-700">{item.name}</span>
                                                                                     </div>
-                                                                                    <span className="text-sm font-medium text-slate-700">{item.name}</span>
+                                                                                    {getItemStatusBadge(item.status)}
                                                                                 </label>
                                                                             ))}
                                                                         </div>
@@ -1583,8 +1632,10 @@
                                     onChange={(e) => setDestinationId(e.target.value)}
                                 >
                                     <option value="">Select Location...</option>
-                                    <optgroup label="Status Update">
-                                        <option value="defect_status">Mark as Defective / Pullout</option>
+                                    <optgroup label="Report Issue">
+                                        <option value="status_Defective">Mark as Defective</option>
+                                        <option value="status_Missing">Mark as Missing</option>
+                                        <option value="status_Incomplete">Mark as Incomplete</option>
                                     </optgroup>
                                     <optgroup label="Floors & Rooms">
                                         {locations.filter(l=>l.type==='floor').map(f => (
@@ -1697,6 +1748,46 @@
                     </div>
                 </div>
             )
+        };
+
+        const ResolveModal = ({ locations, onSave, onClose }) => {
+            const [targetId, setTargetId] = useState('');
+
+            // Filter storage locations only
+            const storageLocations = locations.filter(l => l.type === 'storage');
+
+            return (
+                <div className="p-6">
+                    <h3 className="font-bold text-lg mb-4">Resolve & Return to Storage</h3>
+                    <div className="space-y-4">
+                        <p className="text-sm text-slate-500">Select where to store this item after resolving the issue.</p>
+                        <div>
+                            <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Storage Location</label>
+                            <select 
+                                className="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-slate-50 focus:ring-2 focus:ring-blue-500 outline-none"
+                                value={targetId} 
+                                onChange={e => setTargetId(e.target.value)}
+                            >
+                                <option value="">Select Storage...</option>
+                                {storageLocations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="flex gap-3 mt-6">
+                        <button onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-lg font-medium text-slate-600 hover:bg-slate-50 transition-colors">Cancel</button>
+                        <button 
+                            onClick={() => {
+                                if(targetId) onSave(targetId);
+                            }} 
+                            disabled={!targetId}
+                            className="flex-1 py-2.5 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700 shadow-lg shadow-emerald-200 transition-colors disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed"
+                        >
+                            Confirm Return
+                        </button>
+                    </div>
+                </div>
+            );
         };
 
         const App = () => {
@@ -1909,18 +2000,26 @@
             };
             const handleTransferSave = async (sid, tid, sel) => {
                 const { writeBatch, doc } = window.firebaseModules;
-                const transferredItems = inventory.filter(i => sel[i.id]).map(i => tid === 'defect_status' ? {...i, status: 'Defective'} : {...i, locationId: tid});
+                const transferredItems = inventory.filter(i => sel[i.id]);
                 
                 const batch = writeBatch(db);
                 transferredItems.forEach(item => {
                     const ref = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', item.id);
-                    if (tid === 'defect_status') batch.update(ref, { status: 'Defective' });
-                    else batch.update(ref, { locationId: tid });
+                    
+                    if (tid.startsWith('status_')) {
+                        // Handle status update (Mark as Defective/Missing/Incomplete)
+                        const newStatus = tid.replace('status_', '');
+                        batch.update(ref, { status: newStatus });
+                    } else {
+                        // Handle regular transfer
+                        batch.update(ref, { locationId: tid });
+                    }
                 });
                 await batch.commit();
 
-                if (tid === 'defect_status') {
-                    addLog('Transfer', `Moved items to Defective status`, user?.name, transferredItems);
+                if (tid.startsWith('status_')) {
+                    const statusName = tid.replace('status_', '');
+                    addLog('Report', `Marked items as ${statusName}`, user?.name, transferredItems);
                 } else {
                     addLog('Transfer', `Transferred items to ${getLocationName(locations, tid)}`, user?.name, transferredItems);
                 }
@@ -1959,6 +2058,17 @@
                  addLog('Swap', `Swapped ${srcL.name} with ${tgtL.name}`, user?.name, [...itemsInSrc, ...itemsInTgt]);
                  closeModal();
             };
+
+            const handleResolveSave = async (targetId) => {
+                const { updateDoc, doc } = window.firebaseModules;
+                const item = modal.data;
+                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', item.id), { 
+                    status: 'Working',
+                    locationId: targetId
+                });
+                addLog('Resolve', `Item ${item.name} resolved and moved to ${getLocationName(locations, targetId)}`);
+                closeModal();
+            };
             
             const confirmDelete = async () => {
                 const { deleteDoc, doc, updateDoc } = window.firebaseModules;
@@ -1979,20 +2089,74 @@
             };
 
             const confirmEditName = async (val) => {
-                 const { setDoc, deleteDoc, updateDoc, doc } = window.firebaseModules;
+                 const { setDoc, deleteDoc, updateDoc, doc, writeBatch, collection, query, where, getDocs } = window.firebaseModules;
                  const { type, id, name, parentId } = modal.data;
+                 
+                 const batch = writeBatch(db);
+
                  if(type==='category') {
-                     // Copy to new doc, delete old
-                     const subs = categories[name] || [];
-                     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'categories', val), { subCategories: subs });
-                     await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'categories', name));
-                     // Note: Updating referenced items in catalog/inventory is complex in NoSQL without transactions. Skipping for this simple helper.
+                      // 1. Create new Category Doc & Delete Old
+                      const subs = categories[name] || [];
+                      batch.set(doc(db, 'artifacts', appId, 'public', 'data', 'categories', val), { subCategories: subs });
+                      batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'categories', name));
+                      
+                      // 2. Update Catalog Items
+                      const catQ = query(collection(db, 'artifacts', appId, 'public', 'data', 'catalog'), where('category', '==', name));
+                      const catDocs = await getDocs(catQ);
+                      catDocs.forEach(d => {
+                          batch.update(d.ref, { category: val });
+                      });
+
+                      // 3. Update Inventory Items
+                      const invQ = query(collection(db, 'artifacts', appId, 'public', 'data', 'inventory'), where('category', '==', name));
+                      const invDocs = await getDocs(invQ);
+                      invDocs.forEach(d => {
+                          batch.update(d.ref, { category: val });
+                      });
                  }
                  if(type==='subcategory') {
-                     const newSubs = categories[parentId].map(s=>s===name?val:s);
-                     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'categories', parentId), { subCategories: newSubs });
+                      // 1. Update Parent Category Array
+                      const newSubs = categories[parentId].map(s=>s===name?val:s);
+                      batch.update(doc(db, 'artifacts', appId, 'public', 'data', 'categories', parentId), { subCategories: newSubs });
+                      
+                      // 2. Update Catalog Items
+                      const catQ = query(collection(db, 'artifacts', appId, 'public', 'data', 'catalog'), where('category', '==', parentId), where('subCategory', '==', name));
+                      const catDocs = await getDocs(catQ);
+                      catDocs.forEach(d => {
+                          batch.update(d.ref, { subCategory: val });
+                      });
+
+                      // 3. Update Inventory Items
+                      const invQ = query(collection(db, 'artifacts', appId, 'public', 'data', 'inventory'), where('category', '==', parentId), where('subCategory', '==', name));
+                      const invDocs = await getDocs(invQ);
+                      invDocs.forEach(d => {
+                          batch.update(d.ref, { subCategory: val });
+                      });
                  }
+
+                 await batch.commit();
                  addLog('Edit', `${name} -> ${val}`); 
+                 closeModal();
+            };
+
+            const confirmEditProd = async (newName) => {
+                 const { updateDoc, doc, writeBatch, collection, query, where, getDocs } = window.firebaseModules;
+                 const p = modal.data;
+                 
+                 const batch = writeBatch(db);
+                 
+                 // 1. Update Catalog Doc
+                 batch.update(doc(db, 'artifacts', appId, 'public', 'data', 'catalog', p.id), { name: newName });
+                 
+                 // 2. Update All Inventory Items with this Product ID
+                 const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'inventory'), where('productId', '==', p.id));
+                 const snapshot = await getDocs(q);
+                 snapshot.forEach(doc => {
+                     batch.update(doc.ref, { name: newName });
+                 });
+
+                 await batch.commit();
+                 addLog('Edit', `Updated product name: ${p.name} -> ${newName}`, user?.name);
                  closeModal();
             };
 
@@ -2000,15 +2164,6 @@
                  const { updateDoc, doc } = window.firebaseModules;
                  await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'locations', data.id), { name: data.name, parentId: data.parentId, status: data.status });
                  addLog('Edit', `Updated Location: ${data.name}`);
-                 closeModal();
-            };
-
-            const confirmEditProd = async (newName) => {
-                 const { updateDoc, doc } = window.firebaseModules;
-                 const p = modal.data;
-                 await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'catalog', p.id), { name: newName });
-                 // Update active inventory names too? simplified:
-                 addLog('Edit', `Updated product name: ${p.name} -> ${newName}`, user?.name);
                  closeModal();
             };
 
@@ -2119,6 +2274,7 @@
                                        addLog('Status', `Item ${id} fixed/active.`); 
                                    }}
                                    onDeleteItem={(id, name) => setModal({ type: 'delete', data: { type: 'item', id, name } })}
+                                   onResolve={(item) => setModal({ type: 'resolve', data: item })}
                                 />
                             )}
                             {tab==='activity' && (
@@ -2260,6 +2416,13 @@
                                         staff={staff}
                                         sourceId={modal.data.sourceId}
                                         onSwap={handleSwapSave}
+                                        onClose={closeModal}
+                                    />
+                                )}
+                                {modal.type === 'resolve' && (
+                                    <ResolveModal
+                                        locations={locations}
+                                        onSave={handleResolveSave}
                                         onClose={closeModal}
                                     />
                                 )}
