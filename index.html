@@ -44,13 +44,13 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Expose modules to global scope for Babel script
         window.firebaseModules = {
             initializeApp,
             getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
-            getFirestore, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit, writeBatch
+            getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, limit, writeBatch
         };
 
         // Notify that Firebase is ready
@@ -244,6 +244,20 @@
             return "th";
         };
 
+        // Kumuha ng maikling code para sa floor
+        const getFloorCode = (floorName) => {
+            if(!floorName) return '0';
+            if(floorName.includes('Ground')) return 'G';
+            if(floorName.includes('Mezzanine')) return 'M';
+            if(floorName.includes('Roof')) return 'R';
+            if(floorName.includes('Basement')) {
+                const num = floorName.replace(/\D/g, '');
+                return `B${num}`;
+            }
+            const num = parseInt(floorName);
+            return isNaN(num) ? 'X' : num.toString();
+        };
+
         const groupByCategory = (items) => {
             const groups = {};
             if (!items) return groups;
@@ -274,7 +288,6 @@
                 if (targetLoc) {
                     filterTitle = `<div style="font-size: 12px; color: #64748b; font-weight: normal; margin-top: 2px;">Scope: <strong>${targetLoc.name}</strong></div>`;
                     
-                    // Determine relevant location IDs (Self + Children if floor)
                     let relevantIds = [targetLoc.id];
                     if (targetLoc.type === 'floor') {
                         const childIds = locations.filter(l => l.parentId === targetLoc.id).map(l => l.id);
@@ -287,7 +300,7 @@
             }
             // -----------------------
             
-            // Stats Calculation (Use filtered data)
+            // Stats Calculation
             const rooms = reportLocations.filter(l => l.type === 'room');
             const totalRooms = rooms.length;
             const occupied = rooms.filter(l => l.status === 'Occupied').length;
@@ -298,8 +311,8 @@
                 <div style="font-family: 'Helvetica', sans-serif; padding: 40px; color: #334155; font-size: 12px; line-height: 1.5; background: white;">
                     <div style="border-bottom: 2px solid #1e40af; padding-bottom: 10px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: flex-end;">
                         <div>
-                            <h1 style="margin: 0; font-size: 24px; color: #1e40af; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">Corporate Inventory Report</h1>
-                            <p style="margin: 5px 0 0; color: #64748b; font-size: 12px;">Generated on: ${dateStr}</p>
+                            <h1 style="margin: 0; font-size: 24px; color: #1e40af; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">Inventory Report</h1>
+                            <p style="margin: 5px 0 0; color: #64748b; font-size: 12px;">Date: ${dateStr}</p>
                             ${filterTitle}
                         </div>
                         <div style="text-align: right;">
@@ -315,8 +328,8 @@
                             <div style="font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: bold;">Total Assets</div>
                         </div>
                          <div style="flex:1; background: #fff1f2; padding: 10px; border-left: 4px solid #ef4444;">
-                            <div style="font-size: 20px; font-weight: bold; color: #b91c1c;">${reportInventory.filter(i => i.status === 'Defective').length}</div>
-                            <div style="font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: bold;">Defects</div>
+                            <div style="font-size: 20px; font-weight: bold; color: #b91c1c;">${reportInventory.filter(i => ['Defective', 'Missing', 'Incomplete', 'Pullout'].includes(i.status)).length}</div>
+                            <div style="font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: bold;">Total Issues</div>
                         </div>
                     </div>
                     
@@ -343,7 +356,7 @@
 
             if (config.inventory) {
                 const grouped = groupByCategory(reportInventory);
-                html += `<h2 style="font-size: 16px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; margin-bottom: 15px; color: #0f172a; font-weight: bold; text-transform: uppercase;">Inventory Overview (Summary)</h2>`;
+                html += `<h2 style="font-size: 16px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; margin-bottom: 15px; color: #0f172a; font-weight: bold; text-transform: uppercase;">Inventory Overview</h2>`;
                 
                 if (reportInventory.length === 0) {
                      html += `<div style="font-style: italic; color: #94a3b8; padding: 10px;">No inventory items found in selection.</div>`;
@@ -367,7 +380,6 @@
                                 </thead>
                                 <tbody>`;
 
-                        // Group Items by Name in this SubCategory
                         const productsInSub = {};
                         grouped[cat][sub].forEach(item => {
                             const name = item.name;
@@ -390,11 +402,9 @@
             if (config.locations) {
                 html += `<div style="page-break-before: always;"><h2 style="font-size: 16px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; margin-bottom: 15px; color: #0f172a; font-weight: bold; text-transform: uppercase;">Location Breakdown</h2>`;
                 
-                // Helper to render a location block
                 const renderLocationBlock = (loc, itemsInLoc) => {
                     let block = `<div style="margin-bottom: 10px; border: 1px solid #e2e8f0; border-radius: 4px; page-break-inside: avoid;">`;
                     
-                    // Header
                     const statusColor = loc.status === 'Occupied' ? '#ef4444' : (loc.status === 'Maintenance' ? '#f59e0b' : '#10b981');
                     const statusText = loc.type === 'room' ? `<span style="color: ${statusColor}; font-weight: bold; font-size: 9px; text-transform: uppercase; border: 1px solid ${statusColor}33; padding: 1px 4px; rounded: 2px; background: ${statusColor}11;">${loc.status}</span>` : '';
                     
@@ -403,12 +413,10 @@
                         ${statusText}
                     </div>`;
 
-                    // Items List
                     block += `<div style="padding: 8px;">`;
                     if (itemsInLoc.length === 0) {
                         block += `<div style="font-size: 10px; color: #cbd5e0; font-style: italic;">No items assigned</div>`;
                     } else {
-                        // Group by Category > SubCategory > Product
                         const groupedItems = {};
                         itemsInLoc.forEach(item => {
                             const cat = item.category || 'Uncategorized';
@@ -443,11 +451,8 @@
                     return block;
                 };
 
-                // 1. Structure by Floor
-                // Only process floors that are in the reportLocations list
                 const floors = reportLocations.filter(l => l.type === 'floor');
                 floors.forEach(floor => {
-                    // Only find children that are ALSO in reportLocations
                     const childRooms = reportLocations.filter(l => l.parentId === floor.id);
                     
                     html += `<div style="margin-bottom: 20px;">`;
@@ -464,7 +469,6 @@
                     html += `</div>`;
                 });
 
-                // 2. Storage & Boxes (Non-floor locations)
                 const otherLocs = reportLocations.filter(l => (l.type === 'storage' || l.type === 'box'));
                 if(otherLocs.length > 0) {
                      html += `<div style="margin-top: 20px; page-break-before: avoid;">`;
@@ -476,9 +480,6 @@
                      html += `</div>`;
                 }
                 
-                // 3. Orphan Rooms (Rooms selected explicitly without their floor being selected/present in the list if simplified logic was used, though our logic includes parent floors often. 
-                // But if the user selects a specific room, filter logic above might isolate it. 
-                // If the filter selected a ROOM, floors array will be empty.
                 const orphanRooms = reportLocations.filter(l => l.type === 'room' && !reportLocations.find(p => p.id === l.parentId));
                 if (orphanRooms.length > 0) {
                      html += `<div style="margin-top: 20px; page-break-before: avoid;">`;
@@ -492,23 +493,19 @@
             }
 
             if (config.defects) {
-                const defects = reportInventory.filter(i => i.status === 'Defective' || i.status === 'Pullout');
+                const defects = reportInventory.filter(i => ['Defective', 'Missing', 'Incomplete', 'Pullout'].includes(i.status));
                 if(defects.length > 0) {
-                    html += `<div style="page-break-before: always; page-break-inside: avoid;"><h2 style="font-size: 16px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; margin-bottom: 15px; color: #b91c1c; font-weight: bold; text-transform: uppercase;">Defective Items Report</h2>`;
+                    html += `<div style="page-break-before: always; page-break-inside: avoid;"><h2 style="font-size: 16px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; margin-bottom: 15px; color: #b91c1c; font-weight: bold; text-transform: uppercase;">Issues Report</h2>`;
                     html += `<table style="width: 100%; border-collapse: collapse; font-size: 10px;"><thead><tr style="background: #fee2e2;"><th style="padding:6px; border:1px solid #fca5a5; text-align: left;">ID</th><th style="padding:6px; border:1px solid #fca5a5; text-align: left;">Name</th><th style="padding:6px; border:1px solid #fca5a5; text-align: left;">Location</th><th style="padding:6px; border:1px solid #fca5a5; text-align: left;">Status</th></tr></thead><tbody>`;
                     defects.forEach(i => {
-                        html += `<tr><td style="padding:6px; border:1px solid #e2e8f0; font-family: monospace;">${i.id}</td><td style="padding:6px; border:1px solid #e2e8f0;">${i.name}</td><td style="padding:6px; border:1px solid #e2e8f0;">${getLocationName(locations, i.locationId)}</td><td style="padding:6px; border:1px solid #e2e8f0; color: #b91c1c; font-weight: bold;">${i.status}</td></tr>`;
+                        html += `<tr><td style="padding:6px; border:1px solid #e2e8f0; font-family: monospace;">${i.customId || i.id}</td><td style="padding:6px; border:1px solid #e2e8f0;">${i.name}</td><td style="padding:6px; border:1px solid #e2e8f0;">${getLocationName(locations, i.locationId)}</td><td style="padding:6px; border:1px solid #e2e8f0; color: #b91c1c; font-weight: bold;">${i.status}</td></tr>`;
                     });
                     html += `</tbody></table></div>`;
                 }
             }
 
             if (config.activity) {
-                // If filtering by location, technically logs don't have location IDs easily accessible unless we parse details.
-                // We'll leave activity log global or maybe hide it if filtering? 
-                // For now, let's keep it global as per standard requirement, or filter if simple.
-                // Since log structure is simple, let's just show all for context unless user unchecked it.
-                html += `<div style="page-break-before: always;"><h2 style="font-size: 16px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; margin-bottom: 15px; color: #0f172a; font-weight: bold; text-transform: uppercase;">Activity Log (Recent)</h2>`;
+                html += `<div style="page-break-before: always;"><h2 style="font-size: 16px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; margin-bottom: 15px; color: #0f172a; font-weight: bold; text-transform: uppercase;">Activity Log</h2>`;
                 html += `<table style="width: 100%; border-collapse: collapse; font-size: 10px;"><thead><tr style="background: #f1f5f9;"><th style="padding:6px; border:1px solid #e2e8f0; text-align: left;">Date</th><th style="padding:6px; border:1px solid #e2e8f0; text-align: left;">Action</th><th style="padding:6px; border:1px solid #e2e8f0; text-align: left;">Details</th><th style="padding:6px; border:1px solid #e2e8f0; text-align: left;">User</th></tr></thead><tbody>`;
                 logs.slice(0, 50).forEach(log => {
                     html += `<tr><td style="padding:6px; border:1px solid #e2e8f0;">${new Date(log.timestamp).toLocaleString()}</td><td style="padding:6px; border:1px solid #e2e8f0; font-weight: bold;">${log.action}</td><td style="padding:6px; border:1px solid #e2e8f0;">${log.details}</td><td style="padding:6px; border:1px solid #e2e8f0;">${log.performer || 'System'}</td></tr>`;
@@ -519,7 +516,6 @@
             html += `</div>`;
             element.innerHTML = html;
             
-            // To ensure visibility for html2canvas
             const wrapper = document.getElementById('report-wrapper');
             wrapper.style.zIndex = 9999;
             wrapper.style.height = 'auto';
@@ -539,8 +535,6 @@
                 wrapper.style.height = '0';
             });
         };
-
-        // --- 5. COMPONENTS ---
 
         const NavBtn = ({ icon, label, active, onClick, color, hidden }) => {
             if (hidden) return null;
@@ -587,7 +581,7 @@
                                 <div className="w-16 h-16 bg-indigo-500 rounded-2xl flex items-center justify-center mx-auto mb-4 text-white shadow-lg shadow-indigo-900/50">
                                     <Icon name="User" size={32} />
                                 </div>
-                                <h1 className="text-xl font-bold text-white mb-1">Welcome, {selectedUser.name}</h1>
+                                <h1 className="text-xl font-bold text-white mb-1">Welcome Back, {selectedUser.name}</h1>
                                 <p className="text-slate-400 text-sm">Please enter your password</p>
                             </div>
                             <form onSubmit={handlePasswordLogin} className="p-6 space-y-4">
@@ -661,7 +655,7 @@
             const occupancy = rooms.length ? Math.round((occupied/rooms.length)*100) : 0;
             const storageIds = locations.filter(l=>l.type==='storage').map(l=>l.id);
             const inStorage = inventory.filter(i=>storageIds.includes(i.locationId) && i.status === 'Active').length;
-            const defects = inventory.filter(i=>i.status==='Defective' || i.status==='Pullout').length;
+            const defects = inventory.filter(i=>['Defective', 'Missing', 'Incomplete', 'Pullout'].includes(i.status)).length;
             const catStats = inventory.reduce((acc, i) => { acc[i.category] = (acc[i.category] || 0) + 1; return acc; }, {});
             const maxVal = Math.max(...Object.values(catStats), 1);
 
@@ -714,7 +708,9 @@
             const selectedLocation = useMemo(() => locations.find(l => l.id === selectedId), [locations, selectedId]);
 
             let relevantLocations = filterType === 'structure' ? locations.filter(l => l.type === 'floor') : locations.filter(l => l.type === filterType);
-            const getItemsInLocation = (locId) => inventory.filter(i => i.locationId === locId);
+            
+            // FILTER: Only Active items in Room view (Defective moved to defect only)
+            const getItemsInLocation = (locId) => inventory.filter(i => i.locationId === locId && !['Defective', 'Missing', 'Incomplete', 'Pullout'].includes(i.status));
             const getLocationItemCount = (locId) => getItemsInLocation(locId).length;
 
             const getDeepGroupedItems = (locId) => {
@@ -733,7 +729,16 @@
 
             const toggleFloor = id => setOpenFloors(p => ({...p, [id]: !p[id]}));
             const toggleGroup = key => setExpandedGroups(p => ({...p, [key]: !p[key]}));
-            const getItemStatusBadge = (s) => <span className={`text-[10px] px-1.5 py-0.5 rounded border font-bold ${s==='Defective'?'bg-red-50 text-red-600':s==='Pullout'?'bg-slate-800 text-white':'bg-green-50 text-green-600'}`}>{s}</span>;
+            
+            const getItemStatusBadge = (s) => {
+                let colorClass = 'bg-green-50 text-green-600 border-green-100';
+                if (s === 'Defective' || s === 'Pullout') colorClass = 'bg-red-50 text-red-600 border-red-100';
+                else if (s === 'Missing') colorClass = 'bg-orange-50 text-orange-600 border-orange-100';
+                else if (s === 'Incomplete') colorClass = 'bg-yellow-50 text-yellow-600 border-yellow-100';
+                
+                return <span className={`text-[10px] px-1.5 py-0.5 rounded border font-bold ${colorClass}`}>{s}</span>;
+            };
+
             const getStatusColor = (status) => status === 'Occupied' ? 'bg-red-100 text-red-700 border-red-200' : status === 'Maintenance' ? 'bg-yellow-100 text-yellow-700 border-yellow-200' : 'bg-green-100 text-green-700 border-green-200';
 
             return (
@@ -827,14 +832,14 @@
                                                                                     {items.map(item => (
                                                                                         <div key={item.id} className="flex justify-between items-center p-2 bg-white rounded-lg border border-slate-200 shadow-sm text-sm">
                                                                                             <div className="flex items-center gap-2">
-                                                                                                <span className="font-mono text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">{item.id}</span>
+                                                                                                {item.customId ? <span className="font-mono text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">{item.customId}</span> : <span className="font-mono text-[10px] bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded italic">--</span>}
                                                                                                 {getItemStatusBadge(item.status)}
                                                                                             </div>
                                                                                             <div className="flex gap-1">
-                                                                                                {item.status === 'Defective' ? (
+                                                                                                {['Defective', 'Missing', 'Incomplete', 'Pullout'].includes(item.status) ? (
                                                                                                     <button onClick={()=>onUpdateItemStatus(item.id, 'Active')} className="p-1.5 text-emerald-500 hover:bg-emerald-50 rounded" title="Set to Active"><Icon name="CheckCircle2" size={14}/></button>
                                                                                                 ) : (
-                                                                                                    <button onClick={()=>onReportIssue(item)} className="p-1.5 text-amber-500 hover:bg-amber-50 rounded" title="Report Issue"><Icon name="Wrench" size={14}/></button>
+                                                                                                    <button onClick={()=>onReportIssue(item)} className="p-1.5 text-amber-500 hover:bg-amber-50 rounded" title="Report Issue"><Icon name="AlertTriangle" size={14}/></button>
                                                                                                 )}
                                                                                                 <button onClick={()=>onDeleteItem(item.id, item.name)} className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded"><Icon name="Trash2" size={14}/></button>
                                                                                             </div>
@@ -860,37 +865,68 @@
             );
         };
 
-        const DefectView = ({ inventory, locations, onUpdateItemStatus, onDeleteItem }) => {
-            const defectiveItems = inventory.filter(i => i.status === 'Defective' || i.status === 'Pullout');
-            const groupedItems = groupByCategory(defectiveItems);
+        const DefectView = ({ inventory, locations, onUpdateItemStatus, onDeleteItem, onFixItem }) => {
+            const [currentTab, setCurrentTab] = useState('Defective');
+            
+            const getItemsByTab = (tab) => {
+                if (tab === 'Defective') return inventory.filter(i => i.status === 'Defective' || i.status === 'Pullout');
+                if (tab === 'Missing') return inventory.filter(i => i.status === 'Missing');
+                if (tab === 'Incomplete') return inventory.filter(i => i.status === 'Incomplete');
+                return [];
+            };
+
+            const displayedItems = getItemsByTab(currentTab);
+            const groupedItems = groupByCategory(displayedItems);
+
+            const tabs = [
+                { id: 'Defective', label: 'Defective / Pullout', color: 'red' },
+                { id: 'Missing', label: 'Missing', color: 'orange' },
+                { id: 'Incomplete', label: 'Incomplete', color: 'yellow' }
+            ];
 
             return (
-                <div className="bg-white rounded-lg shadow border border-gray-100 h-full overflow-y-auto p-4 safe-pb">
-                    <h3 className="font-bold text-lg mb-4 text-red-600 flex items-center gap-2"><Icon name="AlertOctagon"/> Defective / Pullout</h3>
-                    {defectiveItems.length === 0 ? <p className="text-center text-gray-400 py-10">No items reported.</p> : (
-                        Object.entries(groupedItems).map(([cat, subCats]) => (
-                             <div key={cat} className="mb-4">
-                                <h4 className="font-bold text-gray-700 border-b pb-1 mb-2">{cat}</h4>
-                                {Object.entries(subCats).map(([sub, items]) => (
-                                    <div key={sub} className="ml-4 mb-2">
-                                        <h5 className="text-sm font-semibold text-gray-500 mb-1">{sub}</h5>
-                                        <div className="space-y-2">
-                                            {items.map(item => (
-                                                <div key={item.id} className="flex justify-between items-center p-3 border rounded-lg bg-red-50 border-red-100">
-                                                    <div><div className="font-bold">{item.name}</div><div className="text-xs text-gray-500">ID: {item.id} • Loc: {getLocationName(locations, item.locationId)}</div></div>
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="text-xs font-bold uppercase bg-white px-2 py-1 rounded border border-red-200 text-red-600">{item.status}</span>
-                                                        <button onClick={()=>onUpdateItemStatus(item.id, 'Active')} className="text-xs bg-green-600 text-white px-2 py-1 rounded flex gap-1 items-center"><Icon name="CheckCircle2" size={12}/> Fix</button>
-                                                        <button onClick={()=>onDeleteItem(item.id, item.name)} className="text-gray-400 hover:text-red-500"><Icon name="Trash2" size={16}/></button>
+                <div className="bg-white rounded-lg shadow border border-gray-100 h-full flex flex-col overflow-hidden safe-pb">
+                    <div className="p-4 border-b border-gray-100 bg-gray-50 flex flex-col md:flex-row justify-between items-center gap-4">
+                        <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2"><Icon name="AlertOctagon" className="text-red-500"/> Issues Report</h3>
+                        <div className="flex bg-white rounded-lg p-1 border border-gray-200">
+                            {tabs.map(t => (
+                                <button 
+                                    key={t.id}
+                                    onClick={() => setCurrentTab(t.id)}
+                                    className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${currentTab === t.id ? `bg-${t.color}-100 text-${t.color}-700` : 'text-slate-500 hover:bg-slate-50'}`}
+                                >
+                                    {t.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto p-4">
+                        {displayedItems.length === 0 ? <p className="text-center text-gray-400 py-10">No items found in {currentTab}.</p> : (
+                            Object.entries(groupedItems).map(([cat, subCats]) => (
+                                <div key={cat} className="mb-4">
+                                    <h4 className="font-bold text-gray-700 border-b pb-1 mb-2">{cat}</h4>
+                                    {Object.entries(subCats).map(([sub, items]) => (
+                                        <div key={sub} className="ml-4 mb-2">
+                                            <h5 className="text-sm font-semibold text-gray-500 mb-1">{sub}</h5>
+                                            <div className="space-y-2">
+                                                {items.map(item => (
+                                                    <div key={item.id} className="flex justify-between items-center p-3 border rounded-lg bg-slate-50 border-gray-200">
+                                                        <div><div className="font-bold">{item.name}</div><div className="text-xs text-gray-500">ID: {item.customId || item.id} • Loc: {getLocationName(locations, item.locationId)}</div></div>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className={`text-xs font-bold uppercase bg-white px-2 py-1 rounded border ${currentTab==='Missing'?'text-orange-600 border-orange-200':currentTab==='Incomplete'?'text-yellow-600 border-yellow-200':'text-red-600 border-red-200'}`}>{item.status}</span>
+                                                            <button onClick={()=>onFixItem(item)} className="text-xs bg-green-600 text-white px-2 py-1 rounded flex gap-1 items-center hover:bg-green-700"><Icon name="CheckCircle2" size={12}/> Resolve</button>
+                                                            <button onClick={()=>onDeleteItem(item.id, item.name)} className="text-gray-400 hover:text-red-500"><Icon name="Trash2" size={16}/></button>
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            ))}
+                                                ))}
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
-                             </div>
-                        ))
-                    )}
+                                    ))}
+                                </div>
+                            ))
+                        )}
+                    </div>
                 </div>
             )
         };
@@ -905,17 +941,15 @@
             const [filterCat, setFilterCat] = useState('');
             const [selectedCategory, setSelectedCategory] = useState(''); 
             
-            // Staff State
             const [newStaffName, setNewStaffName] = useState('');
             const [newStaffRole, setNewStaffRole] = useState('Live Operator');
 
-            // Report State
             const [reportOpts, setReportOpts] = useState({
                 inventory: true,
                 locations: true,
                 defects: true,
                 activity: false,
-                filterLocationId: '' // NEW
+                filterLocationId: '' 
             });
 
             const filteredCatalog = catalog.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()) && (filterCat ? p.category === filterCat : true));
@@ -930,13 +964,12 @@
             return (
                 <div className="bg-white rounded-xl shadow-sm border border-slate-100 h-full flex flex-col overflow-hidden safe-pb">
                     <div className="flex border-b border-slate-100 overflow-x-auto shrink-0">
-                        {['equipment', 'location', 'staff', 'report'].map(t => (
+                        {['equipment', 'location', 'staff', 'report', 'system'].map(t => (
                             <button key={t} onClick={()=>setTab(t)} className={`flex-1 min-w-[100px] py-4 text-sm font-medium border-b-2 transition-colors capitalize ${tab===t ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>{t}</button>
                         ))}
                     </div>
                     
                     <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
-                        {/* ... (equipment and location tabs remain same) ... */}
                         {tab === 'location' && (
                             <div className="space-y-8">
                                 <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
@@ -965,11 +998,11 @@
                                                     {availableFloors.map(f=><option key={f} value={f}>{f}</option>)}
                                                 </select>
                                             ) : (
-                                                <input className="w-full border-slate-200 rounded-lg text-sm p-2.5" placeholder="e.g. Room 101" value={newLoc.name} onChange={e=>setNewLoc({...newLoc, name: e.target.value})} />
+                                                <input className="w-full border-slate-200 rounded-lg text-sm p-2.5" placeholder={newLoc.type === 'room' ? "e.g. Conference Room" : "e.g. Storage 1"} value={newLoc.name} onChange={e=>setNewLoc({...newLoc, name: e.target.value})} />
                                             )}
                                         </div>
                                         <button onClick={()=>{
-                                            if(newLoc.name) {
+                                            if(newLoc.name || newLoc.type === 'room') {
                                                 actions.onAddLocation(newLoc.name, newLoc.type, newLoc.type==='room'?newLoc.parentId:null, 'Vacant');
                                                 setNewLoc({...newLoc, name:''});
                                             } else alert("Name/Level is required");
@@ -1267,6 +1300,15 @@
                                  <button onClick={()=>actions.onGenerateReport(reportOpts)} className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition">Download PDF</button>
                              </div>
                          )}
+
+                         {tab === 'system' && (
+                             <div className="bg-white p-8 rounded-xl border border-red-100 text-center max-w-md mx-auto mt-10">
+                                 <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4"><Icon name="AlertTriangle" size={32}/></div>
+                                 <h3 className="text-xl font-bold text-slate-800">Factory Reset</h3>
+                                 <p className="text-slate-500 mb-6 text-sm">This action will permanently delete ALL data including inventory, locations, logs, and staff accounts. This cannot be undone.</p>
+                                 <button onClick={()=>actions.onFactoryReset()} className="w-full bg-red-600 text-white py-3 rounded-lg font-bold hover:bg-red-700 shadow-lg shadow-red-200 transition">Reset System Data</button>
+                             </div>
+                         )}
                     </div>
                 </div>
             );
@@ -1291,6 +1333,85 @@
                     <div className="flex justify-end gap-2 mt-6">
                             <button onClick={onClose} className="px-4 py-2 border rounded">Cancel</button>
                             <button onClick={()=>onSave({id: data.id, name, parentId, status})} className="px-4 py-2 bg-blue-600 text-white rounded">Save</button>
+                    </div>
+                </div>
+            );
+        };
+
+        const ReportIssueContent = ({ item, onSave, onClose }) => {
+            return (
+                <div className="p-6">
+                    <h3 className="font-bold text-lg mb-2">Report Issue: {item.name}</h3>
+                    <p className="text-sm text-slate-500 mb-6">Select the type of issue for this item.</p>
+                    
+                    <div className="grid grid-cols-1 gap-3">
+                        <button onClick={() => onSave(item, 'Defective')} className="p-4 rounded-xl border border-red-200 bg-red-50 text-red-700 font-bold hover:bg-red-100 flex items-center gap-3 transition-colors">
+                            <div className="p-2 bg-white rounded-full shadow-sm"><Icon name="AlertTriangle" size={20}/></div>
+                            Defective / Broken
+                        </button>
+                        <button onClick={() => onSave(item, 'Missing')} className="p-4 rounded-xl border border-orange-200 bg-orange-50 text-orange-700 font-bold hover:bg-orange-100 flex items-center gap-3 transition-colors">
+                            <div className="p-2 bg-white rounded-full shadow-sm"><Icon name="Search" size={20}/></div>
+                            Missing / Lost
+                        </button>
+                        <button onClick={() => onSave(item, 'Incomplete')} className="p-4 rounded-xl border border-yellow-200 bg-yellow-50 text-yellow-700 font-bold hover:bg-yellow-100 flex items-center gap-3 transition-colors">
+                            <div className="p-2 bg-white rounded-full shadow-sm"><Icon name="AlertTriangle" size={20}/></div>
+                            Incomplete Parts
+                        </button>
+                    </div>
+
+                    <div className="mt-6">
+                        <button onClick={onClose} className="w-full py-3 border border-slate-200 rounded-lg font-medium text-slate-600 hover:bg-slate-50 transition-colors">Cancel</button>
+                    </div>
+                </div>
+            );
+        };
+
+        const FixItemContent = ({ item, locations, onSave, onClose }) => {
+            const [targetId, setTargetId] = useState('');
+
+            return (
+                <div className="p-6">
+                    <h3 className="font-bold text-lg mb-2">Resolve Issue: {item.name}</h3>
+                    <p className="text-sm text-slate-500 mb-6">Item status is currently <strong>{item.status}</strong>. Where do you want to move it after fixing?</p>
+                    <div className="space-y-4">
+                        <div>
+                            <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Destination</label>
+                            <select 
+                                className="w-full border border-slate-300 rounded-lg p-2.5 text-sm bg-slate-50 focus:ring-2 focus:ring-blue-500 outline-none"
+                                value={targetId} 
+                                onChange={e => setTargetId(e.target.value)}
+                            >
+                                <option value="">Select Location...</option>
+                                <optgroup label="Floors & Rooms">
+                                    {locations.filter(l=>l.type==='floor').map(f => (
+                                        <React.Fragment key={f.id}>
+                                            {locations.filter(r=>r.parentId===f.id).map(r=>(
+                                                <option key={r.id} value={r.id}>{f.name} - {r.name}</option>
+                                            ))}
+                                        </React.Fragment>
+                                    ))}
+                                </optgroup>
+                                <optgroup label="Storage">
+                                    {locations.filter(l=>l.type==='storage').map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
+                                </optgroup>
+                                <optgroup label="Boxes">
+                                    {locations.filter(l=>l.type==='box').map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
+                                </optgroup>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="flex gap-3 mt-6">
+                        <button onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-lg font-medium text-slate-600 hover:bg-slate-50 transition-colors">Cancel</button>
+                        <button 
+                            onClick={() => {
+                                if(targetId) onSave(item, targetId);
+                            }} 
+                            disabled={!targetId}
+                            className="flex-1 py-2.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 shadow-lg shadow-green-200 transition-colors disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed"
+                        >
+                            Resolve & Transfer
+                        </button>
                     </div>
                 </div>
             );
@@ -1394,7 +1515,7 @@
                                 }} 
                                 className="flex-1 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 shadow-lg shadow-blue-200 transition-colors"
                             >
-                                Confirm Assignment
+                                Confirm
                             </button>
                         </div>
                     </div>
@@ -1481,7 +1602,7 @@
                                                                                         onChange={(e) => handleCheckbox(item.id, e.target.checked)}
                                                                                     />
                                                                                     <div className="flex flex-col">
-                                                                                        <span className="text-xs font-mono text-slate-500 bg-slate-100 px-1 rounded w-fit">{item.id}</span>
+                                                                                        {item.customId ? <span className="text-xs font-mono text-slate-500 bg-slate-100 px-1 rounded w-fit">{item.customId}</span> : <span className="text-xs font-mono text-slate-400 bg-slate-100 px-1 rounded w-fit italic">--</span>}
                                                                                     </div>
                                                                                     <span className="text-sm font-medium text-slate-700">{item.name}</span>
                                                                                 </label>
@@ -1735,21 +1856,28 @@
                              else id = `FLOOR-${Math.floor(Math.random()*1000)}`;
                         }
                     } else {
-                        const prefix = {room:'ROOM', storage:'STR', box:'BOX'}[t];
-                        let idPrefix = prefix;
+                        // NEW LOGIC FOR ROOMS: R[Num]F[Floor]
                         if (t === 'room' && p) {
                              const floor = locations.find(l => l.id === p);
-                             if (floor) {
-                                 const floorNum = floor.id.split('-')[1];
-                                 if (floorNum) idPrefix = floorNum; 
-                             }
+                             const floorCode = floor ? getFloorCode(floor.name) : 'X';
+                             
+                             // Count existing rooms on this floor to determine next number
+                             const roomCount = locations.filter(l => l.parentId === p && l.type === 'room').length + 1;
+                             
+                             // Format: R[number]F[FloorCode]
+                             const roomId = `R${roomCount}F${floorCode}`;
+                             id = roomId; 
+                             if(!n) n = roomId; // Default name to ID if not provided, but allow renaming
+                        } else {
+                            // Fallback for storage/box
+                            const prefix = {storage:'STR', box:'BOX'}[t];
+                            const existingNums = locations
+                                .filter(l => l.type === t && l.id.startsWith(prefix))
+                                .map(l => parseInt(l.id.split('-').pop()))
+                                .filter(x => !isNaN(x));
+                            const nextNum = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
+                            id = `${prefix}-${String(nextNum).padStart(3, '0')}`;
                         }
-                        const existingNums = locations
-                            .filter(l => l.type === t && l.id.startsWith(idPrefix))
-                            .map(l => parseInt(l.id.split('-').pop()))
-                            .filter(x => !isNaN(x));
-                        const nextNum = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
-                        id = `${idPrefix}-${String(nextNum).padStart(3, '0')}`;
                     }
                     if (locations.some(l => l.id === id)) id += `-${Math.floor(Math.random()*100)}`;
                     
@@ -1809,47 +1937,101 @@
             };
             const handleAssignSave = async (tid, sel) => {
                  const { writeBatch, doc } = window.firebaseModules;
-                 // Logic to pick available items from storage is tricky with async, but state is synced.
-                 // We will iterate local inventory to find IDs, then update them in DB.
-                 const newInv = [...inventory];
+                 
+                 const targetLoc = locations.find(l => l.id === tid);
+                 const isTargetRoom = targetLoc?.type === 'room';
+                 const isTargetBox = targetLoc?.type === 'box';
+                 
                  const storageIds = locations.filter(l=>l.type==='storage').map(l=>l.id);
                  const assignedItems = [];
                  
                  const batch = writeBatch(db);
                  
+                 // We iterate a copy of inventory to track selections
+                 const newInv = [...inventory];
+
                  Object.entries(sel).forEach(([pid, qty]) => {
                      // Find `qty` available items in storage
                      const avail = newInv.filter(i=>i.productId===pid && storageIds.includes(i.locationId) && i.status==='Active');
+                     
                      avail.slice(0, qty).forEach(item => {
                          const idx = newInv.findIndex(x=>x.id===item.id);
                          if(idx>-1) {
-                             newInv[idx] = {...newInv[idx], locationId: tid}; // optimistically update local to avoid double pick
-                             assignedItems.push(newInv[idx]);
-                             const ref = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', item.id);
-                             batch.update(ref, { locationId: tid });
+                             newInv[idx] = {...newInv[idx], locationId: tid}; // update local
+                             
+                             let newItemData = { ...item, locationId: tid };
+                             const oldId = item.id;
+                             
+                             const ref = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', oldId);
+                             const updateData = { locationId: tid };
+                             
+                             // GOLDEN RULE: Only set customId if it doesn't exist yet
+                             // Applies to Room AND Box assignments
+                             if ((isTargetRoom || isTargetBox) && !item.customId) {
+                                 // Set customId to Location ID (e.g. R1F22 or BOX-001)
+                                 updateData.customId = targetLoc.id; 
+                                 newItemData.customId = targetLoc.id;
+                             }
+                             
+                             batch.update(ref, updateData);
+                             assignedItems.push(newItemData);
                          }
                      });
                  });
                  await batch.commit();
-                 addLog('Assign', `Assigned items to ${getLocationName(locations, tid)}`, user?.name, assignedItems);
+                 addLog('Assign', `Assigned items to ${targetLoc.name}`, user?.name, assignedItems);
                  closeModal();
             };
             const handleTransferSave = async (sid, tid, sel) => {
                 const { writeBatch, doc } = window.firebaseModules;
-                const transferredItems = inventory.filter(i => sel[i.id]).map(i => tid === 'defect_status' ? {...i, status: 'Defective'} : {...i, locationId: tid});
+                
+                const targetLoc = locations.find(l => l.id === tid);
+                const sourceLoc = locations.find(l => l.id === sid);
+                
+                const isTargetRoom = targetLoc?.type === 'room';
+                const isTargetBox = targetLoc?.type === 'box';
                 
                 const batch = writeBatch(db);
-                transferredItems.forEach(item => {
-                    const ref = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', item.id);
-                    if (tid === 'defect_status') batch.update(ref, { status: 'Defective' });
-                    else batch.update(ref, { locationId: tid });
+
+                const transferredItems = [];
+
+                inventory.filter(i => sel[i.id]).forEach(item => {
+                    let newItemData = { ...item };
+                    const oldId = item.id;
+                    const ref = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', oldId);
+
+                    if (tid === 'defect_status') {
+                        newItemData.status = 'Defective';
+                        batch.update(ref, { status: 'Defective' });
+                    } else {
+                        newItemData.locationId = tid;
+                        const updateData = { locationId: tid };
+                        
+                        // GOLDEN RULE: 
+                        // 1. If item already has customId, DO NOT CHANGE IT, DO NOT CLEAR IT.
+                        // 2. Only if item has NO customId, and is moving to a room OR box, assign new ID.
+                        
+                        if (!item.customId) {
+                            if (isTargetRoom || isTargetBox) {
+                                 // Assign new ID matches the Location ID
+                                 updateData.customId = targetLoc.id;
+                                 newItemData.customId = targetLoc.id;
+                            } 
+                            // If moving to storage (and has no ID), it stays null (no action needed)
+                        } 
+                        // If item.customId exists, we do nothing to customId property, preserving it permanently.
+
+                        batch.update(ref, updateData);
+                    }
+                    transferredItems.push(newItemData);
                 });
+                
                 await batch.commit();
 
                 if (tid === 'defect_status') {
                     addLog('Transfer', `Moved items to Defective status`, user?.name, transferredItems);
                 } else {
-                    addLog('Transfer', `Transferred items to ${getLocationName(locations, tid)}`, user?.name, transferredItems);
+                    addLog('Transfer', `Transferred items to ${targetLoc ? targetLoc.name : tid}`, user?.name, transferredItems);
                 }
                 closeModal();
             };
@@ -1866,15 +2048,25 @@
                  // Swap Items
                  itemsInSrc.forEach(i => {
                      const ref = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', i.id);
-                     batch.update(ref, { locationId: tid });
-                 });
-                 itemsInTgt.forEach(i => {
-                     const ref = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', i.id);
-                     batch.update(ref, { locationId: sid });
+                     const updateData = { locationId: tid };
+                     // GOLDEN RULE: Assign ID only if missing. Check Room or Box.
+                     if (!i.customId && (tgtL.type === 'room' || tgtL.type === 'box')) {
+                         updateData.customId = tgtL.id;
+                     }
+                     batch.update(ref, updateData);
                  });
                  
-                 // Swap Location Metadata (Names/Status) - keeping IDs fixed usually safer but swapping content is requested. 
-                 // Actually swapping name/status effectively swaps the "logical" room while keeping ID.
+                 itemsInTgt.forEach(i => {
+                     const ref = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', i.id);
+                     const updateData = { locationId: sid };
+                     // GOLDEN RULE: Assign ID only if missing. Check Room or Box.
+                     if (!i.customId && (srcL.type === 'room' || srcL.type === 'box')) {
+                         updateData.customId = srcL.id;
+                     }
+                     batch.update(ref, updateData);
+                 });
+                 
+                 // Swap Location Metadata (Names/Status)
                  const srcRef = doc(db, 'artifacts', appId, 'public', 'data', 'locations', sid);
                  const tgtRef = doc(db, 'artifacts', appId, 'public', 'data', 'locations', tid);
                  
@@ -1885,6 +2077,25 @@
                  
                  addLog('Swap', `Swapped ${srcL.name} with ${tgtL.name}`, user?.name, [...itemsInSrc, ...itemsInTgt]);
                  closeModal();
+            };
+            const handleFixSave = async (item, targetId) => {
+                const { updateDoc, doc } = window.firebaseModules;
+                const targetLoc = locations.find(l => l.id === targetId);
+                
+                const updateData = { 
+                    status: 'Active', 
+                    locationId: targetId
+                };
+
+                // GOLDEN RULE: Only generate new ID if one doesn't exist
+                // Applies if target is Room OR Box
+                if (!item.customId && (targetLoc?.type === 'room' || targetLoc?.type === 'box')) {
+                    updateData.customId = targetLoc.id;
+                }
+
+                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', item.id), updateData);
+                addLog('Fix', `Fixed and moved item to ${targetLoc?.name || targetId}`, user?.name);
+                closeModal();
             };
             
             const confirmDelete = async () => {
@@ -1948,17 +2159,26 @@
 
             const confirmReset = async () => {
                 const { writeBatch, doc } = window.firebaseModules;
-                // Warning: This deletes everything!
                 const batch = writeBatch(db);
-                // Since we can't easily delete collections, we'd need to fetch all and delete. 
-                // Simplified: just alert user this feature is disabled for safety or implement loop delete.
-                // For this demo, let's just clear local state which will sync back if we wrote empty... no, onSnapshot is one way from DB.
-                // We must delete from DB.
+                
+                // Delete items from all collections
                 inventory.forEach(i => batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', i.id)));
                 locations.forEach(l => batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'locations', l.id)));
-                // ... others
+                catalog.forEach(c => batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'catalog', c.id)));
+                staff.forEach(s => batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'staff', s.id)));
+                
+                Object.keys(categories).forEach(c => batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'categories', c)));
+                
+                // For logs, since we don't have the doc IDs in state (we have payload ID), we fetch:
+                const { getDocs, collection } = window.firebaseModules;
+                const logsSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'logs'));
+                logsSnap.forEach(d => batch.delete(d.ref));
+
                 await batch.commit();
+                
+                // Staff listener will see empty and re-seed default admin.
                 closeModal();
+                alert("System has been successfully reset.");
             };
 
             if (!user) {
@@ -2026,11 +2246,7 @@
                                         await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'locations', id), { status: s });
                                         addLog('Status', `Room ${id} -> ${s}`); 
                                     }}
-                                    onReportIssue={async (item) => { 
-                                        const { updateDoc, doc } = window.firebaseModules;
-                                        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', item.id), { status: 'Defective' });
-                                        addLog('Report', item.name); 
-                                    }}
+                                    onReportIssue={(item) => setModal({ type: 'reportIssue', data: item })}
                                     onUpdateItemStatus={async (id, s) => { 
                                         const { updateDoc, doc } = window.firebaseModules;
                                         await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', id), { status: s });
@@ -2039,13 +2255,16 @@
                                 />
                             )}
                             {tab==='defects' && (
-                                <DefectView inventory={inventory} locations={locations} 
-                                   onUpdateItemStatus={async (id, status) => { 
-                                       const { updateDoc, doc } = window.firebaseModules;
-                                       await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', id), { status });
-                                       addLog('Status', `Item ${id} fixed/active.`); 
-                                   }}
-                                   onDeleteItem={(id, name) => setModal({ type: 'delete', data: { type: 'item', id, name } })}
+                                <DefectView 
+                                    inventory={inventory} 
+                                    locations={locations} 
+                                    onFixItem={(item) => setModal({ type: 'fixItem', data: item })}
+                                    onDeleteItem={(id, name) => setModal({ type: 'delete', data: { type: 'item', id, name } })}
+                                    onUpdateItemStatus={async (id, s) => { 
+                                        const { updateDoc, doc } = window.firebaseModules;
+                                        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', id), { status: s });
+                                        addLog('Status', `Item ${id} fixed/active.`); 
+                                    }}
                                 />
                             )}
                             {tab==='activity' && (
@@ -2148,10 +2367,10 @@
                                             const l = document.getElementById('stLoc').value;
                                             if(l && q>0) {
                                                 const newItems = [];
-                                                const existing = inventory.map(i=>i.id);
                                                 for(let i=0; i<q; i++) {
+                                                    // Generate Temp ID for Storage Items (Blank)
                                                     newItems.push({
-                                                        id: generateItemUniqueId(modal.data.name, existing.concat(newItems.map(x=>x.id))),
+                                                        id: `TEMP_${Date.now()}_${i}_${Math.floor(Math.random()*1000)}`,
                                                         productId: modal.data.id, name: modal.data.name, category: modal.data.category, subCategory: modal.data.subCategory, locationId: l, status: 'Active'
                                                     });
                                                 }
@@ -2190,6 +2409,26 @@
                                         onClose={closeModal}
                                     />
                                 )}
+                                {modal.type === 'reportIssue' && (
+                                    <ReportIssueContent 
+                                        item={modal.data}
+                                        onSave={async (item, status) => {
+                                            const { updateDoc, doc } = window.firebaseModules;
+                                            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', item.id), { status: status });
+                                            addLog('Report', `Marked ${item.name} as ${status}`, user?.name);
+                                            closeModal();
+                                        }}
+                                        onClose={closeModal}
+                                    />
+                                )}
+                                {modal.type === 'fixItem' && (
+                                    <FixItemContent 
+                                        item={modal.data} 
+                                        locations={locations} 
+                                        onSave={handleFixSave}
+                                        onClose={closeModal}
+                                    />
+                                )}
                                 {modal.type === 'viewLogDetails' && <LogDetailsContent log={modal.data} onClose={closeModal} />}
                                 {modal.type === 'confirm' && (
                                     <div className="p-6 text-center">
@@ -2218,15 +2457,21 @@
 
             const { initializeApp, getAuth, getFirestore } = window.firebaseModules;
 
-            const firebaseConfig = {
-                apiKey: "AIzaSyBUVnTBzxA2-E7U-rmit46H7txqO9nP_1E",
-                authDomain: "inventory-app-24c97.firebaseapp.com",
-                projectId: "inventory-app-24c97",
-                storageBucket: "inventory-app-24c97.firebasestorage.app",
-                messagingSenderId: "410420603875",
-                appId: "1:410420603875:web:e93c85e32d9bad8a66ced6",
-                measurementId: "G-7LW6QN7DR2"
-            };
+            // Use system config if available (Preview Env), otherwise fallback to original
+            let firebaseConfig;
+            if (typeof __firebase_config !== 'undefined') {
+                firebaseConfig = JSON.parse(__firebase_config);
+            } else {
+                firebaseConfig = {
+                    apiKey: "AIzaSyBUVnTBzxA2-E7U-rmit46H7txqO9nP_1E",
+                    authDomain: "inventory-app-24c97.firebaseapp.com",
+                    projectId: "inventory-app-24c97",
+                    storageBucket: "inventory-app-24c97.firebasestorage.app",
+                    messagingSenderId: "410420603875",
+                    appId: "1:410420603875:web:e93c85e32d9bad8a66ced6",
+                    measurementId: "G-7LW6QN7DR2"
+                };
+            }
 
             const app = initializeApp(firebaseConfig);
             auth = getAuth(app);
